@@ -5,7 +5,7 @@ pub(super) fn render_worktree_create_overlay(
     create: &ClientWorktreeCreateOverlay,
     p: &Palette,
 ) -> Option<OverlayRender> {
-    let popup = popup(b.area, 68, 12)?;
+    let popup = popup(b.area, 68, 14)?;
     let inner = panel(b, popup, p.accent, p.panel_bg)?;
     put_text(
         b,
@@ -50,11 +50,38 @@ pub(super) fn render_worktree_create_overlay(
         &format!(" {}", create.checkout_path),
         Style::default().fg(p.subtext0).bg(p.panel_bg),
     );
+    let mission_rect = Rect::new(inner.x, inner.y + 8, inner.width, 1);
+    put_text(
+        b,
+        mission_rect.x,
+        mission_rect.y,
+        mission_rect.width,
+        &format!(
+            " mission: {}{}",
+            create
+                .mission
+                .as_ref()
+                .map(|m| format!("{} ({})", m.name.as_str(), m.id.0))
+                .unwrap_or_else(|| "None".into()),
+            if create.mission_available {
+                " · tab choose…"
+            } else {
+                " · unavailable"
+            }
+        ),
+        Style::default()
+            .fg(if create.mission_available {
+                p.accent
+            } else {
+                p.overlay0
+            })
+            .bg(p.surface0),
+    );
     if create.creating {
         put_text(
             b,
             inner.x,
-            inner.y + 8,
+            inner.y + 10,
             inner.width,
             " creating…",
             Style::default().fg(p.accent).bg(p.panel_bg),
@@ -63,13 +90,13 @@ pub(super) fn render_worktree_create_overlay(
         put_text(
             b,
             inner.x,
-            inner.y + 8,
+            inner.y + 10,
             inner.width,
             &format!(" {error}"),
             Style::default().fg(p.red).bg(p.panel_bg),
         );
     }
-    let buttons = row(inner, &[20, 12], 2, 9);
+    let buttons = row(inner, &[20, 12], 2, 11);
     let [primary, cancel] = buttons.as_slice() else {
         return None;
     };
@@ -94,7 +121,7 @@ pub(super) fn render_worktree_create_overlay(
     Some(OverlayRender {
         area: popup,
         primary: *primary,
-        clear: Rect::default(),
+        clear: mission_rect,
         cancel: *cancel,
         navigator_popup: Rect::default(),
         navigator_search: Rect::default(),

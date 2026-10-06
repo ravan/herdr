@@ -43,6 +43,7 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
             | Method::WorkspaceReportMetadata(_)
             | Method::WorkspaceClose(_)
             | Method::WorktreeCreate(_)
+            | Method::WorktreeCreateInMission(_)
             | Method::WorktreeOpen(_)
             | Method::WorktreeRemove(_)
             | Method::TabCreate(_)

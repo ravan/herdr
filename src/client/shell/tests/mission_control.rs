@@ -1,5 +1,179 @@
 use super::*;
 
+fn mission_creation_client() -> ClientShellState {
+    let mut state = mission_members_client();
+    let mut snap = state.snapshot.as_deref().unwrap().clone();
+    let mut parent = snap.workspaces[0].clone();
+    parent.workspace_id = "ws_parent".into();
+    parent.label = "Repository parent".into();
+    parent.worktree.as_mut().unwrap().is_linked_worktree = false;
+    snap.workspaces.push(parent);
+    snap.revision += 1;
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snap));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut projected = surface();
+    projected.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    projected.surface_revision = 3;
+    state.set_pane_surface(projected);
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "worktree.list".into(),
+        "worktree.create_in_mission".into(),
+    ]));
+    state
+}
+
+#[test]
+fn mc_s7_contextual_preparation_revalidates_mission_source_and_independent_capability() {
+    for change in ["mission", "source", "capability"] {
+        let mut state = mission_creation_client();
+        open(&mut state, 140, 40);
+        state.handle_input_bytes(b"\tempty\x0e");
+        let choose = state.handle_input_bytes(b"\r");
+        let [ClientShellAction::Endpoint { request, .. }] = &choose.actions[..] else {
+            panic!("source preparation");
+        };
+        match change {
+            "mission" => {
+                let mut catalog = state.endpoints[0].organization.clone().unwrap();
+                catalog.organization.missions.retain(|m| m.id.0 != "empty");
+                catalog.organization.revision += 1;
+                state.set_endpoint_organization_for_generation(
+                    &ClientEndpointId::Local,
+                    1,
+                    catalog,
+                );
+            }
+            "source" => {
+                let mut snapshot = state.snapshot.as_deref().unwrap().clone();
+                snapshot
+                    .workspaces
+                    .retain(|w| w.workspace_id != "ws_parent");
+                snapshot.revision += 1;
+                state.cache_endpoint_snapshot_for_generation(
+                    &ClientEndpointId::Local,
+                    1,
+                    Box::new(snapshot),
+                );
+                state.activate_endpoint_projection(&ClientEndpointId::Local);
+            }
+            _ => state.set_endpoint_methods(Some(vec![
+                "organization.get".into(),
+                "worktree.list".into(),
+                "worktree.create".into(),
+            ])),
+        }
+        state.handle_endpoint_result("boot-1", &request.id, Ok(worktree_list_result(None)));
+        assert!(
+            !matches!(state.overlay, Some(ClientShellOverlay::WorktreeCreate(_))),
+            "{change} cannot revive captured creation intent"
+        );
+        assert!(state.visible_endpoint_notice.is_some(), "{change}");
+    }
+    let mut legacy = mission_creation_client();
+    legacy.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "worktree.list".into(),
+        "worktree.create".into(),
+    ]));
+    open(&mut legacy, 140, 40);
+    legacy.handle_input_bytes(b"\tempty");
+    assert!(frame_rows(&legacy.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("new worktree unavailable"));
+    let action = legacy.handle_input_bytes(b"\x0e");
+    assert!(action.actions.is_empty());
+    assert!(matches!(
+        legacy.overlay,
+        Some(ClientShellOverlay::MissionControl(_))
+    ));
+}
+
+#[test]
+fn mc_s7_heading_capture_does_not_adopt_restored_id_after_endpoint_reconnect() {
+    let mut state = mission_creation_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\tempty");
+    state.compose(140, 40).unwrap();
+    let mut snapshot = state.snapshot.as_deref().unwrap().clone();
+    snapshot.boot_id = "boot-2".into();
+    snapshot.revision += 1;
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.boot_id = "boot-2".into();
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 2, Box::new(snapshot));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 2, catalog);
+    let mut frame = surface();
+    frame.boot_id = "boot-2".into();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 4;
+    state.set_pane_surface(frame);
+    let action = state.handle_input_bytes(b"\x0e");
+    assert!(action.actions.is_empty());
+    assert!(
+        matches!(state.overlay, Some(ClientShellOverlay::MissionControl(_))),
+        "reconnect does not open source picker using old heading capture"
+    );
+    assert!(state.visible_endpoint_notice.is_some());
+}
+
+#[test]
+fn mc_s7_mouse_context_action_reuses_compact_visible_geometry() {
+    let mut state = mission_creation_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\tempty");
+    let frame = state.compose(50, 14).unwrap();
+    let rows = frame_rows(&frame);
+    let y = rows
+        .iter()
+        .position(|row| row.contains("new worktree"))
+        .expect("visible mouse action") as u16;
+    let x = rows[y as usize].find("new worktree").unwrap() as u16;
+    let action = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(action.actions.is_empty());
+    let text = frame_rows(&state.compose(50, 14).unwrap()).join("\n");
+    assert!(
+        text.contains("ws_parent"),
+        "mouse opens source picker for selected mission"
+    );
+}
+
+#[test]
+fn mc_s7_empty_mission_creation_asks_for_exact_parent_then_reuses_native_form() {
+    let mut state = mission_creation_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t");
+    state.handle_input_bytes(b"empty");
+    state.compose(140, 40).unwrap();
+    let action = state.handle_input_bytes(b"\x0e"); // Ctrl+n: new worktree in selected mission.
+    assert!(
+        action.actions.is_empty(),
+        "explicit source choice precedes discovery"
+    );
+    let frame = state.compose(140, 40).unwrap();
+    let text = frame_rows(&frame).join("\n");
+    assert!(
+        text.contains("Repository parent") && text.contains("ws_parent"),
+        "source picker displays exact eligible parent"
+    );
+    let choose = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &choose.actions[..] else {
+        panic!("source discovery");
+    };
+    assert!(
+        matches!(&request.method, crate::api::schema::Method::WorktreeList(p) if p.workspace_id.as_deref() == Some("ws_parent"))
+    );
+    state.handle_endpoint_result("boot-1", &request.id, Ok(worktree_list_result(None)));
+    assert!(
+        matches!(&state.overlay, Some(ClientShellOverlay::WorktreeCreate(create)) if create.source_workspace_id == "ws_parent" && create.mission.as_ref().is_some_and(|m| m.id.0 == "empty"))
+    );
+}
+
 #[test]
 fn mc_s6_search_selects_matching_members_from_headings_and_updates_compact_hits_in_one_batch() {
     let mut state = mission_members_client();

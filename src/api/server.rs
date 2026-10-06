@@ -598,6 +598,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::WorkspaceClose(_) => "workspace.close",
         Method::WorktreeList(_) => "worktree.list",
         Method::WorktreeCreate(_) => "worktree.create",
+        Method::WorktreeCreateInMission(_) => "worktree.create_in_mission",
         Method::WorktreeOpen(_) => "worktree.open",
         Method::WorktreeRemove(_) => "worktree.remove",
         Method::TabCreate(_) => "tab.create",

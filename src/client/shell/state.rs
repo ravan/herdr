@@ -436,6 +436,9 @@ pub(super) struct ClientSettingsOverlay {
 
 #[derive(Debug)]
 pub(super) struct ClientWorktreeCreateOverlay {
+    pub(super) source_capture: Option<WorkspaceNavigationTarget>,
+    pub(super) mission: Option<crate::organization::Mission>,
+    pub(super) mission_available: bool,
     pub(super) source_workspace_id: String,
     pub(super) repo_name: String,
     pub(super) branch: TextEditor,
@@ -551,6 +554,14 @@ pub(super) enum ClientContextMenuAction {
 
 #[derive(Debug)]
 pub(super) enum ClientContextMenuTarget {
+    MissionWorktreeSources {
+        intent: super::worktree_missions::MissionWorktreeIntent,
+        sources: Vec<(WorkspaceNavigationTarget, String)>,
+    },
+    WorktreeMissionPicker {
+        create: Box<ClientWorktreeCreateOverlay>,
+        missions: Vec<crate::organization::Mission>,
+    },
     PaneMissionPicker {
         context: super::pane_missions::PaneMissionMenuContext,
         missions: Vec<crate::organization::Mission>,
@@ -678,6 +689,10 @@ pub(super) enum PendingEndpointKind {
     ReloadConfig,
     IntegrationList,
     IntegrationInstall,
+    PrepareMissionWorktreeCreate {
+        source: WorkspaceNavigationTarget,
+        intent: super::worktree_missions::MissionWorktreeIntent,
+    },
     PrepareWorktreeCreate {
         workspace_id: String,
     },

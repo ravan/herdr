@@ -115,6 +115,8 @@ pub enum Method {
     WorktreeList(WorktreeListParams),
     #[serde(rename = "worktree.create")]
     WorktreeCreate(WorktreeCreateParams),
+    #[serde(rename = "worktree.create_in_mission")]
+    WorktreeCreateInMission(WorktreeCreateInMissionParams),
     #[serde(rename = "worktree.open")]
     WorktreeOpen(WorktreeOpenParams),
     #[serde(rename = "worktree.remove")]

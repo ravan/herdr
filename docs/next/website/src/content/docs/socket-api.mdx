@@ -101,7 +101,7 @@ Raw socket method names use dot notation:
 | Client | `client.window_title.set`, `client.window_title.clear` |
 | Session | `session.snapshot` |
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.move_block`, `workspace.report_metadata`, `workspace.close` |
-| Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
+| Worktree | `worktree.list`, `worktree.create`, `worktree.create_in_mission`, `worktree.open`, `worktree.remove` |
 | Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.move`, `tab.close` |
 | Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
 | Popup | `popup.close` |
@@ -345,6 +345,12 @@ Create a worktree from a source workspace:
 
 ```json
 {"id":"req_1","method":"worktree.create","params":{"workspace_id":"w1","branch":"worktree/api","focus":false}}
+```
+
+`worktree.create_in_mission` is advertised independently. Its required `mission_id` accompanies the unchanged creation parameters. It returns the same `worktree_created` result after assigning the initial tab and inheriting the family collection. `worktree.create` keeps its existing semantics. An unknown mission is rejected before Git runs. If the mission is deleted during Git or opening a terminal fails afterward, the error names the successfully created checkout path; the checkout remains for recovery. Cancelling the client form sends no creation request. Submitted creation follows the existing asynchronous policy.
+
+```json
+{"id":"req_mission","method":"worktree.create_in_mission","params":{"workspace_id":"w1","mission_id":"mission_1","branch":"worktree/objective","focus":false}}
 ```
 
 Open an existing checkout:

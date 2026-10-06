@@ -608,7 +608,7 @@ impl ClientShellState {
         if matches!(self.overlay, Some(ClientShellOverlay::ContextMenu(_))) {
             match key.code {
                 KeyCode::Esc => {
-                    self.overlay = None;
+                    self.cancel_worktree_mission_picker();
                     outcome.repaint = true;
                 }
                 KeyCode::Up => {

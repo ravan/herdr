@@ -272,6 +272,12 @@ Worktree 方法把 Git 检出作为 Herdr 工作区管理。`worktree.create` �
 {"id":"req_1","method":"worktree.create","params":{"workspace_id":"w1","branch":"worktree/api","focus":false}}
 ```
 
+`worktree.create_in_mission` 单独公布支持情况。它接受必填的 `mission_id` 和原有创建参数，在初始标签页完成任务分配并继承家族集合后，返回相同的 `worktree_created` 结果。`worktree.create` 保持原有语义。不存在的任务在 Git 运行前被拒绝。如果任务在 Git 运行期间被删除，或之后终端创建失败，错误会显示已成功创建的检出目录路径，并保留该目录以供恢复。取消客户端表单不会发送创建请求；已提交的创建遵循现有异步策略。
+
+```json
+{"id":"req_mission","method":"worktree.create_in_mission","params":{"workspace_id":"w1","mission_id":"mission_1","branch":"worktree/objective","focus":false}}
+```
+
 打开已有检出:
 
 ```json

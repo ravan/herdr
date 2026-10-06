@@ -1438,7 +1438,7 @@ impl ClientShellState {
                     if let Some((_, index)) = row_hit {
                         self.activate_context_menu_item(index, outcome);
                     } else {
-                        self.overlay = None;
+                        self.cancel_worktree_mission_picker();
                         outcome.repaint = true;
                     }
                 }
@@ -1486,6 +1486,10 @@ impl ClientShellState {
                             self.overlay = None;
                             outcome.repaint = true;
                         }
+                    } else if matches!(self.overlay, Some(ClientShellOverlay::WorktreeCreate(_)))
+                        && super::contains(self.hits.overlay_clear, point)
+                    {
+                        self.open_worktree_mission_picker(outcome);
                     } else if super::contains(self.hits.worktree_search, point) {
                         if let Some(ClientShellOverlay::WorktreeOpen(open)) = self.overlay.as_mut()
                         {

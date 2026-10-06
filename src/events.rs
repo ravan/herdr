@@ -12,6 +12,7 @@ use crate::workspace::{GitStatusCacheEntry, WorkspaceGitStatus};
 #[derive(Debug)]
 pub struct ApiWorktreeAddRequest {
     pub id: String,
+    pub mission_id: Option<crate::organization::MissionId>,
     pub operation_id: u64,
     pub checkout_key: std::path::PathBuf,
     pub source_workspace_id: Option<String>,

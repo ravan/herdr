@@ -4726,6 +4726,61 @@
           ],
           "type": "object"
         },
+        "WorktreeCreateInMissionParams": {
+          "description": "Contextual creation has its own advertised method; ordinary create stays frozen.",
+          "properties": {
+            "base": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "focus": {
+              "default": false,
+              "type": "boolean"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mission_id": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trust_repository": {
+              "type": "boolean"
+            },
+            "workspace_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "mission_id"
+          ],
+          "type": "object"
+        },
         "WorktreeCreateParams": {
           "properties": {
             "base": {
@@ -5393,6 +5448,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/WorktreeCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "worktree.create_in_mission",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorktreeCreateInMissionParams"
             }
           },
           "required": [

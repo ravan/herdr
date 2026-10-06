@@ -1081,8 +1081,7 @@ impl App {
                     "worktree discovery is handled asynchronously by the app runtime",
                 );
             }
-            Method::WorktreeCreate(params) => {
-                let _ = params;
+            Method::WorktreeCreate(_) | Method::WorktreeCreateInMission(_) => {
                 return responses::encode_error(
                     request.id,
                     "invalid_request",

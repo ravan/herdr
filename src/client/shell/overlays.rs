@@ -1488,7 +1488,17 @@ fn render_mission_control(
         .error
         .as_ref()
         .map(|error| format!("Target unavailable: {error}"))
-        .unwrap_or_else(|| "↑↓ select · enter jump · tab view · right-click assign".into());
+        .unwrap_or_else(|| {
+            if control.view == super::mission_control::MissionControlView::Missions {
+                if control.mission_worktree_available {
+                    "new worktree · ctrl+n · ↑↓ select · enter jump".into()
+                } else {
+                    "new worktree unavailable · ↑↓ select · enter jump".into()
+                }
+            } else {
+                "↑↓ select · enter jump · tab view · right-click assign".into()
+            }
+        });
     put_text(
         buffer,
         geometry.footer.x,
@@ -1505,6 +1515,11 @@ fn render_mission_control(
         area,
         cursor,
         cancel: geometry.close,
+        clear: if control.view == super::mission_control::MissionControlView::Missions {
+            geometry.mission_worktree_action()
+        } else {
+            Rect::default()
+        },
         mission_control_rows: control.hit_rows(),
         mission_control_scrollbar: geometry.scrollbar,
         mission_control_scroll_metrics: Some(metrics),

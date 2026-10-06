@@ -9,6 +9,24 @@ impl ClientContextMenuOverlay {
             action,
         };
         let mut items = match &self.target {
+            ClientContextMenuTarget::MissionWorktreeSources { sources, .. } => sources
+                .iter()
+                .enumerate()
+                .map(|(index, (_, label))| ClientContextMenuItem {
+                    label: label.clone(),
+                    action: Action::AssignMission(index),
+                })
+                .collect(),
+            ClientContextMenuTarget::WorktreeMissionPicker { missions, .. } => {
+                let mut rows = vec![item("None · ordinary worktree", Action::AssignMission(0))];
+                rows.extend(missions.iter().enumerate().map(|(index, mission)| {
+                    ClientContextMenuItem {
+                        label: format!("{} ({})", mission.name.as_str(), mission.id.0),
+                        action: Action::AssignMission(index + 1),
+                    }
+                }));
+                rows
+            }
             ClientContextMenuTarget::PaneMissionPicker { missions, .. }
             | ClientContextMenuTarget::MissionPicker { missions, .. } => missions
                 .iter()
@@ -329,6 +347,22 @@ impl ClientShellState {
             return;
         };
         match menu.target {
+            ClientContextMenuTarget::MissionWorktreeSources { intent, sources } => {
+                if let ClientContextMenuAction::AssignMission(index) = action {
+                    if let Some((source, _)) = sources.get(index) {
+                        self.prepare_mission_worktree(source.clone(), intent, outcome);
+                    }
+                }
+            }
+            ClientContextMenuTarget::WorktreeMissionPicker {
+                mut create,
+                missions,
+            } => {
+                if let ClientContextMenuAction::AssignMission(index) = action {
+                    create.mission = index.checked_sub(1).and_then(|i| missions.get(i).cloned());
+                }
+                self.overlay = Some(ClientShellOverlay::WorktreeCreate(*create));
+            }
             ClientContextMenuTarget::PaneMissionPicker { context, missions } => {
                 if let ClientContextMenuAction::AssignMission(index) = action {
                     if let Some(mission) = missions.get(index) {

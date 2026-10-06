@@ -59,6 +59,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "workspace.move_block",
     "workspace.rename",
     "worktree.create",
+    "worktree.create_in_mission",
     "worktree.list",
     "worktree.open",
     "worktree.remove",
@@ -298,6 +299,10 @@ mod tests {
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
         for (method, digest) in [
+            (
+                "worktree.create_in_mission",
+                "972e67434ba65940f77fc79d7247ae5c2cde25831441d26ab3981afbdc2fdbaa",
+            ),
             (
                 "mission.assign_pane",
                 "7ddb05e7476da2677974bb51fe587d0835301139d478f2ca5fe9e49d7277b6d9",

@@ -272,6 +272,12 @@ Worktree メソッドは Git チェックアウトを Herdr ワークスペー�
 {"id":"req_1","method":"worktree.create","params":{"workspace_id":"w1","branch":"worktree/api","focus":false}}
 ```
 
+`worktree.create_in_mission` は個別に対応状況を通知します。必須の `mission_id` と従来の作成パラメータを受け取り、最初のタブへの割り当てとファミリーのコレクションの継承を確認してから同じ `worktree_created` を返します。`worktree.create` の動作は変わりません。存在しないミッションは Git の実行前に拒否します。Git の実行中にミッションが削除された場合や、その後の端末作成に失敗した場合、エラーは作成済みのチェックアウトのパスを示し、復旧のためにチェックアウトを保持します。フォームのキャンセルは作成リクエストを送信しません。送信済みの作成には既存の非同期ポリシーを適用します。
+
+```json
+{"id":"req_mission","method":"worktree.create_in_mission","params":{"workspace_id":"w1","mission_id":"mission_1","branch":"worktree/objective","focus":false}}
+```
+
 既存のチェックアウトを開く:
 
 ```json

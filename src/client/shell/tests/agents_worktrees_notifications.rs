@@ -1215,6 +1215,59 @@ fn navigate_mode_selects_workspace_locally_then_focuses_by_stable_id() {
 }
 
 #[test]
+fn mc_s7_native_create_mission_picker_preserves_branch_and_dispatches_contextual_method() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot()));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    let catalog: crate::protocol::endpoint::EndpointOrganizationCatalog = serde_json::from_value(serde_json::json!({
+        "boot_id": "boot-1", "revision": 1, "organization": { "revision": 1, "collections": [], "family_assignments": [],
+            "missions": [{"id":"platform", "name":"Tako platform", "order":0}] }
+    })).unwrap();
+    state.set_endpoint_methods(Some(vec![
+        "worktree.list".into(),
+        "worktree.create".into(),
+        "worktree.create_in_mission".into(),
+        "organization.get".into(),
+    ]));
+    state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    assert!(state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog));
+    let mut prepare = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::NewWorktree),
+        &mut prepare,
+    );
+    let [ClientShellAction::Endpoint { request, .. }] = &prepare.actions[..] else {
+        panic!("prepare");
+    };
+    state.handle_endpoint_result("boot-1", &request.id, Ok(worktree_list_result(None)));
+    state.handle_input_bytes(b"feature/contextual");
+    let frame = state.compose(106, 30).unwrap();
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| row.iter().map(|c| c.symbol.as_str()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("mission"),
+        "optional mission control belongs in native form"
+    );
+    // Tab opens the existing menu style picker; None is the first row.
+    state.handle_input_bytes(b"\t\x1b[B\r");
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("submit");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({
+            "method":"worktree.create_in_mission", "params": {"mission_id":"platform", "workspace_id":"ws_1", "branch":"feature/contextual", "base":"HEAD", "focus": false}
+        })
+    );
+}
+
+#[test]
 fn worktree_create_previews_the_endpoint_owned_checkout_path() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

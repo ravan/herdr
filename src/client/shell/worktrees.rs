@@ -74,6 +74,7 @@ impl ClientShellState {
                         self.overlay = None;
                         outcome.repaint = true;
                     }
+                    KeyCode::Tab if !creating => self.open_worktree_mission_picker(outcome),
                     KeyCode::Enter => self.submit_worktree_create(outcome),
                     _ => {}
                 }
@@ -241,6 +242,9 @@ impl ClientShellState {
     }
 
     pub(super) fn submit_worktree_create(&mut self, outcome: &mut ClientShellInput) {
+        if !self.validate_worktree_create_intent(outcome) {
+            return;
+        }
         let Some(worktree_directory) = self.endpoint_worktree_directory() else {
             return;
         };
@@ -262,17 +266,28 @@ impl ClientShellState {
         create.creating = true;
         create.error = None;
         let workspace_id = create.source_workspace_id.clone();
+        let mission = create.mission.as_ref().map(|m| m.id.clone());
+        let params = crate::api::schema::WorktreeCreateParams {
+            workspace_id: Some(workspace_id),
+            cwd: None,
+            branch: Some(branch),
+            base: Some("HEAD".to_owned()),
+            path: None,
+            label: None,
+            focus: false,
+            trust_repository: false,
+        };
+        let method = match mission {
+            Some(mission_id) => crate::api::schema::Method::WorktreeCreateInMission(
+                crate::api::schema::WorktreeCreateInMissionParams {
+                    mission_id,
+                    create: params,
+                },
+            ),
+            None => crate::api::schema::Method::WorktreeCreate(params),
+        };
         if !self.push_endpoint_method_with_kind(
-            crate::api::schema::Method::WorktreeCreate(crate::api::schema::WorktreeCreateParams {
-                workspace_id: Some(workspace_id),
-                cwd: None,
-                branch: Some(branch),
-                base: Some("HEAD".to_owned()),
-                path: None,
-                label: None,
-                focus: false,
-                trust_repository: false,
-            }),
+            method,
             PendingEndpointKind::WorktreeCreate,
             outcome,
         ) {
@@ -374,6 +389,34 @@ impl ClientShellState {
         use crate::api::schema::ResponseResult;
 
         match (kind, result) {
+            (PendingEndpointKind::PrepareMissionWorktreeCreate { source, intent }, result) => {
+                if !self.mission_worktree_intent_valid(&intent)
+                    || !self.navigation_target_valid(&source)
+                    || source.endpoint_id != self.active_endpoint_id
+                {
+                    self.worktree_mission_notice(
+                        "The selected source or mission connection is no longer available.",
+                        outcome,
+                    );
+                    return true;
+                }
+                let confirmed = result.is_ok();
+                self.handle_worktree_endpoint_result(
+                    PendingEndpointKind::PrepareWorktreeCreate {
+                        workspace_id: source.workspace_id.clone(),
+                    },
+                    result,
+                    outcome,
+                );
+                if confirmed {
+                    if let Some(ClientShellOverlay::WorktreeCreate(create)) = self.overlay.as_mut()
+                    {
+                        create.source_capture = Some(source);
+                        create.mission = Some(intent.mission);
+                    }
+                }
+                true
+            }
             (
                 PendingEndpointKind::PrepareWorktreeCreate { workspace_id },
                 Ok(ResponseResult::WorktreeList { source, .. }),
@@ -390,6 +433,10 @@ impl ClientShellState {
                     checkout_path_preview(&worktree_directory, &source.repo_name, &branch);
                 self.overlay = Some(ClientShellOverlay::WorktreeCreate(
                     ClientWorktreeCreateOverlay {
+                        source_capture: self
+                            .navigation_target(&self.active_endpoint_id, &workspace_id),
+                        mission: None,
+                        mission_available: self.worktree_missions_available(),
                         source_workspace_id: workspace_id,
                         repo_name: source.repo_name,
                         branch: TextEditor::new(&branch, true),

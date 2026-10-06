@@ -101,6 +101,7 @@ pub(super) struct MissionControl {
     collapsed_families: HashSet<String>,
     pub(super) scroll: usize,
     pub(super) error: Option<String>,
+    pub(super) mission_worktree_available: bool,
     pub(super) geometry: SpaceGeometry,
     reveal_selected: bool,
     scrollbar_grab: Option<u16>,
@@ -329,6 +330,7 @@ impl ClientShellState {
                 hibernate_expanded: false,
                 collapsed_families: HashSet::new(),
                 error: None,
+                mission_worktree_available: false,
                 geometry: SpaceGeometry::default(),
                 reveal_selected: true,
                 scrollbar_grab: None,
@@ -350,6 +352,13 @@ impl ClientShellState {
         else {
             return;
         };
+        control.mission_worktree_available = endpoint.status == ClientEndpointStatus::Online
+            && endpoint.organization_supported
+            && endpoint.organization.is_some()
+            && endpoint
+                .methods
+                .as_ref()
+                .is_some_and(|m| m.contains("worktree.create_in_mission"));
         let Some(snapshot) = endpoint.snapshot.as_deref() else {
             return;
         };
@@ -366,6 +375,12 @@ impl ClientShellState {
         };
         if control.stamp.as_ref() == Some(&stamp) {
             return;
+        }
+        if let Some(SpaceSelection::Mission(id)) = &control.selected {
+            control.selection_stale |= control.stamp.as_ref().is_some_and(|previous| {
+                previous.boot_id != stamp.boot_id || previous.generation != stamp.generation
+            }) || !catalog
+                .is_some_and(|c| c.missions.iter().any(|mission| &mission.id == id));
         }
         if let Some(SpaceSelection::Target(target)) = control.selected.as_ref() {
             control.selection_stale |= !members::target_applicable(endpoint, target);
@@ -404,7 +419,11 @@ impl ClientShellState {
         if let Some((cols, rows)) = self.last_composed_size {
             self.prepare_mission_control_geometry(cols, rows);
         }
-        if key.code == KeyCode::Esc {
+        if key.code == KeyCode::Char('n')
+            && key.modifiers == crossterm::event::KeyModifiers::CONTROL
+        {
+            self.create_mission_control_worktree(outcome);
+        } else if key.code == KeyCode::Esc {
             self.overlay = None;
         } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
             if let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_ref() {
@@ -474,6 +493,11 @@ impl ClientShellState {
             self.hits.mission_control_scrollbar = control.geometry.scrollbar;
             self.hits.mission_control_scroll_metrics = Some(control.scroll_metrics());
             self.hits.overlay_cancel = control.geometry.close;
+            self.hits.overlay_clear = if control.view == MissionControlView::Missions {
+                control.geometry.mission_worktree_action()
+            } else {
+                Rect::default()
+            };
             control.input_projection_dirty = false;
         }
     }
@@ -523,6 +547,12 @@ impl ClientShellState {
                 return;
             }
         }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && contains(self.hits.overlay_clear, point)
+        {
+            self.create_mission_control_worktree(outcome);
+            return;
+        }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Right) => {
                 if let Some((_, selection)) = self
@@ -537,7 +567,12 @@ impl ClientShellState {
                         control.selected = Some(selection);
                         control.selection_stale = false;
                     }
-                    self.assign_mission_control_target(outcome);
+                    if matches!(&self.overlay, Some(ClientShellOverlay::MissionControl(control)) if matches!(control.selected, Some(SpaceSelection::Mission(_))))
+                    {
+                        self.create_mission_control_worktree(outcome);
+                    } else {
+                        self.assign_mission_control_target(outcome);
+                    }
                     outcome.repaint = true;
                 }
             }
@@ -687,6 +722,66 @@ impl ClientShellState {
             }
         }
         self.sync_mission_control_input_projection();
+    }
+
+    fn create_mission_control_worktree(&mut self, outcome: &mut ClientShellInput) {
+        self.refresh_mission_control();
+        let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_ref() else {
+            return;
+        };
+        if control.view != MissionControlView::Missions || control.selection_stale {
+            self.space_target_notice(
+                "Select a current mission or member to create a worktree.",
+                outcome,
+            );
+            return;
+        }
+        let (mission, member_workspace) = match &control.selected {
+            Some(SpaceSelection::Mission(id)) => (id.clone(), None),
+            Some(SpaceSelection::Target(target)) => {
+                let TargetApplicability::Mission(id) = &target.applicability else {
+                    return;
+                };
+                let Some(endpoint) = self
+                    .endpoints
+                    .iter()
+                    .find(|e| e.endpoint_id == target.endpoint_id)
+                else {
+                    return;
+                };
+                if !members::target_applicable(endpoint, target) {
+                    self.space_target_notice(
+                        "The selected mission member is no longer available.",
+                        outcome,
+                    );
+                    return;
+                }
+                let workspace = endpoint
+                    .snapshot
+                    .as_deref()
+                    .and_then(|s| match &target.focus {
+                        ClientEndpointFocusTarget::Workspace(id) => Some(id.clone()),
+                        ClientEndpointFocusTarget::Tab(id) => s
+                            .tabs
+                            .iter()
+                            .find(|t| &t.tab_id == id)
+                            .map(|t| t.workspace_id.clone()),
+                        ClientEndpointFocusTarget::Pane(id) => s
+                            .panes
+                            .iter()
+                            .find(|p| &p.pane_id == id)
+                            .map(|p| p.workspace_id.clone()),
+                        #[cfg(windows)]
+                        ClientEndpointFocusTarget::Notification { .. } => None,
+                    });
+                (id.clone(), workspace)
+            }
+            _ => {
+                self.space_target_notice("Select a mission to create a worktree.", outcome);
+                return;
+            }
+        };
+        self.begin_mission_worktree(mission, member_workspace, outcome);
     }
 
     fn assign_mission_control_target(&mut self, outcome: &mut ClientShellInput) {
@@ -1073,6 +1168,9 @@ pub(super) struct SpaceGeometry {
 }
 
 impl SpaceGeometry {
+    pub(super) fn mission_worktree_action(self) -> Rect {
+        Rect::new(self.footer.x, self.footer.y, 13, 1).intersection(self.footer)
+    }
     pub(super) fn view_tabs(self) -> [(Rect, MissionControlView); 3] {
         let y = self.header.y.saturating_add(1);
         let area = Rect::new(self.header.x, y, self.header.width, 1).intersection(self.area);

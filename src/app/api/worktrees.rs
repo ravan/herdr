@@ -9,6 +9,7 @@ use crate::app::App;
 use super::responses::{encode_error, encode_success};
 
 mod deferred;
+mod mission;
 mod reads;
 
 struct ApiFailure {
@@ -727,6 +728,343 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mc_s7_contextual_create_commits_initial_tab_and_family_before_success() {
+        let repo = create_committed_repo("mc-s7-create");
+        let checkout = unique_temp_path("mc-s7-checkout");
+        let mut app = app_with_parent(&repo);
+        let collection = app
+            .state
+            .create_collection("Agent workshop".into())
+            .unwrap();
+        let family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+        app.state
+            .assign_family_to_collection(family, collection.id.clone())
+            .unwrap();
+        let mission = app
+            .state
+            .create_mission("Tako platform".into(), None)
+            .unwrap();
+        let workspace_id = app.public_workspace_id(0);
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id": "contextual", "method": "worktree.create_in_mission",
+            "params": { "workspace_id": workspace_id, "mission_id": mission.id,
+                "branch": "worktree/mc-s7", "path": checkout, "focus": false }
+        }))
+        .expect("contextual creation is a public JSON method");
+        let response = run_deferred_api_request(&mut app, request);
+        let response: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorktreeCreated { tab, root_pane, .. } = response.result else {
+            panic!("create result");
+        };
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(
+            app.state
+                .organization
+                .mission_for(&crate::organization::MissionTarget::Tab {
+                    tab_id: tab.tab_id.clone()
+                }),
+            Some(&mission.id)
+        );
+        let parent_family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+        assert_eq!(
+            parent_family,
+            crate::app::AppState::family_id(&app.state.workspaces[1])
+        );
+        assert_eq!(
+            app.state.organization.collection_for(&parent_family),
+            Some(&collection.id)
+        );
+        assert_eq!(
+            app.state
+                .organization
+                .effective_pane_mission(&root_pane.pane_id, &tab.tab_id),
+            Some(&mission.id)
+        );
+        let catalog: serde_json::Value = serde_json::from_str(
+            &app.handle_api_request(
+                serde_json::from_value(
+                    serde_json::json!({"id":"catalog", "method":"organization.get", "params":{}}),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog["result"]["organization"]["mission_assignments"],
+            serde_json::json!([{"target":{"kind":"tab", "tab_id":tab.tab_id}, "mission_id":mission.id}])
+        );
+        app.state.assert_invariants_for_test();
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        let _ = std::fs::remove_dir_all(checkout);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
+    async fn mc_s7_deleted_mission_revalidates_before_family_transaction_and_reports_checkout() {
+        let repo = create_committed_repo("mc-s7-deleted");
+        let checkout = unique_temp_path("mc-s7-deleted-checkout");
+        let mut app = app_with_parent(&repo);
+        let collection = app
+            .state
+            .create_collection("Agent workshop".into())
+            .unwrap();
+        let family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+        app.state
+            .assign_family_to_collection(family, collection.id)
+            .unwrap();
+        let mission = app
+            .state
+            .create_mission("Tako platform".into(), None)
+            .unwrap();
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id":"deleted", "method":"worktree.create_in_mission", "params":{
+                "workspace_id":app.public_workspace_id(0), "mission_id":mission.id,
+                "branch":"mc-s7-deleted", "path":checkout, "focus":false }
+        }))
+        .unwrap();
+        let (tx, rx) = response_channel();
+        assert!(app.handle_deferred_worktree_api_request(request, tx, false));
+        // Model a concurrent removal after dispatch, before the serialized completion.
+        app.state.organization.missions.clear();
+        let usable_revision = app.state.organization.revision;
+        app.state.organization.revision = u64::MAX;
+        let before = app.state.organization.clone();
+        let membership = app.state.workspaces[0].worktree_space.clone();
+        let event = wait_for_app_event(&mut app);
+        app.handle_internal_event(event);
+        let response = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            error.error.code, "mission_not_found",
+            "mission existence precedes family mutation"
+        );
+        assert!(error.error.message.contains(checkout.to_str().unwrap()));
+        assert!(
+            checkout.join("README.md").exists(),
+            "successful checkout remains for recovery"
+        );
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.workspaces[0].worktree_space, membership);
+        assert_eq!(app.state.organization, before);
+        // Revision exhaustion is intentional fault injection, outside the catalog invariant.
+        app.state.organization.revision = usable_revision;
+        app.state.assert_invariants_for_test();
+        let _ = std::fs::remove_dir_all(checkout);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
+    async fn mc_s7_contextual_failures_preserve_terminals_catalog_and_checkout_truth() {
+        for failure in ["unknown", "git", "runtime", "revision"] {
+            let repo = create_committed_repo(&format!("mc-s7-{failure}"));
+            let checkout = unique_temp_path(&format!("mc-s7-{failure}-checkout"));
+            let mut app = app_with_parent(&repo);
+            let collection = app.state.create_collection("Workshop".into()).unwrap();
+            let family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+            app.state
+                .assign_family_to_collection(family, collection.id)
+                .unwrap();
+            let mission = app
+                .state
+                .create_mission("Tako platform".into(), None)
+                .unwrap();
+            let usable_revision = app.state.organization.revision;
+            if failure == "runtime" {
+                app.state.default_shell = "/herdr-mc-s7-nonexistent-shell".into();
+            }
+            if failure == "revision" {
+                app.state.organization.revision = u64::MAX;
+            }
+            let before = app.state.organization.clone();
+            let original = app.workspace_info(0);
+            let request: Request = serde_json::from_value(serde_json::json!({
+                "id":"failure", "method":"worktree.create_in_mission", "params":{
+                    "workspace_id":app.public_workspace_id(0),
+                    "mission_id":if failure == "unknown" { "absent".into() } else { mission.id.0 },
+                    "branch":if failure == "git" { "invalid branch" } else { "mc-s7-failure" },
+                    "path":checkout, "focus":false }
+            }))
+            .unwrap();
+            let response = run_deferred_api_request(&mut app, request);
+            let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+            let expected = match failure {
+                "unknown" => "mission_not_found",
+                "git" => "worktree_create_failed",
+                "runtime" => "worktree_open_failed",
+                _ => "organization_revision_exhausted",
+            };
+            assert_eq!(error.error.code, expected, "{failure}");
+            assert_eq!(app.state.workspaces.len(), 1);
+            assert_eq!(app.workspace_info(0), original);
+            assert_eq!(app.state.organization, before);
+            if matches!(failure, "runtime" | "revision") {
+                assert!(checkout.join("README.md").exists());
+                assert!(error.error.message.contains(checkout.to_str().unwrap()));
+            } else {
+                assert!(!checkout.exists());
+            }
+            app.state.organization.revision = usable_revision;
+            app.state.assert_invariants_for_test();
+            for (_, runtime) in app.terminal_runtimes.drain() {
+                runtime.shutdown();
+            }
+            let _ = std::fs::remove_dir_all(checkout);
+            let _ = std::fs::remove_dir_all(repo);
+        }
+    }
+
+    #[tokio::test]
+    async fn mc_s7_concurrently_opened_checkout_assigns_initial_tab_and_preserves_active_tab() {
+        let repo = create_committed_repo("mc-s7-concurrent-open");
+        let checkout = unique_temp_path("mc-s7-concurrent-checkout");
+        let mut app = app_with_parent(&repo);
+        let mission = app
+            .state
+            .create_mission("Tako platform".into(), None)
+            .unwrap();
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id":"contextual", "method":"worktree.create_in_mission", "params":{
+                "workspace_id":app.public_workspace_id(0), "mission_id":mission.id,
+                "branch":"mc-s7-concurrent", "path":checkout, "focus":false }
+        }))
+        .unwrap();
+        let (tx, rx) = response_channel();
+        assert!(app.handle_deferred_worktree_api_request(request, tx, false));
+        let completion = wait_for_app_event(&mut app);
+        assert!(checkout.join("README.md").exists());
+        // Another serialized request opens this checkout while Git completion waits.
+        let index = app
+            .create_workspace_with_options(checkout.clone(), false)
+            .unwrap();
+        let initial = app.tab_info(index, 0).unwrap();
+        let initial_root = app.root_pane_info(index, 0).unwrap();
+        let other: SuccessResponse = serde_json::from_str(&app.handle_api_request(serde_json::from_value(serde_json::json!({
+            "id":"other", "method":"tab.create", "params": {"workspace_id":app.public_workspace_id(index), "focus":true, "label":"Unrelated active tab"}
+        })).unwrap())).unwrap();
+        let ResponseResult::TabCreated { tab: other_tab, .. } = other.result else {
+            panic!("other tab");
+        };
+        let active = app.state.workspaces[index].active_tab;
+        assert_ne!(active, 0);
+        app.handle_internal_event(completion);
+        let response = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorktreeCreated { tab, root_pane, .. } = success.result else {
+            panic!("worktree result");
+        };
+        assert_eq!(tab.tab_id, initial.tab_id);
+        assert_eq!(root_pane.pane_id, initial_root.pane_id);
+        assert_eq!(root_pane.tab_id, tab.tab_id);
+        assert_eq!(app.state.workspaces[index].active_tab, active);
+        assert_eq!(
+            app.state
+                .organization
+                .mission_for(&crate::organization::MissionTarget::Tab {
+                    tab_id: initial.tab_id
+                }),
+            Some(&mission.id)
+        );
+        assert_eq!(
+            app.state
+                .organization
+                .mission_for(&crate::organization::MissionTarget::Tab {
+                    tab_id: other_tab.tab_id
+                }),
+            None
+        );
+        app.state.assert_invariants_for_test();
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        let _ = std::fs::remove_dir_all(checkout);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
+    async fn mc_s7_contextual_completion_keeps_captured_repository_after_source_changes() {
+        let repo = create_committed_repo("mc-s7-source-original");
+        let other = create_committed_repo("mc-s7-source-other");
+        let checkout = unique_temp_path("mc-s7-source-checkout");
+        let mut app = app_with_parent(&repo);
+        let mission = app
+            .state
+            .create_mission("Tako platform".into(), None)
+            .unwrap();
+        let source_id = app.state.workspaces[0].id.clone();
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id":"source", "method":"worktree.create_in_mission", "params":{
+                "workspace_id":app.public_workspace_id(0), "mission_id":mission.id,
+                "branch":"mc-s7-source", "path":checkout, "focus":false }
+        }))
+        .unwrap();
+        let (tx, rx) = response_channel();
+        assert!(app.handle_deferred_worktree_api_request(request, tx, false));
+        let completion = wait_for_app_event(&mut app);
+        let changed = crate::workspace::WorktreeSpaceMembership {
+            key: "other-repository".into(),
+            label: "Other".into(),
+            repo_root: other.clone(),
+            checkout_path: other.clone(),
+            is_linked_worktree: false,
+        };
+        app.state.workspaces[0].identity_cwd = other.clone();
+        app.state
+            .set_workspace_worktree_membership(&source_id, changed.clone())
+            .unwrap();
+        app.handle_internal_event(completion);
+        let response = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorktreeCreated {
+            workspace,
+            tab,
+            root_pane,
+            ..
+        } = success.result
+        else {
+            panic!("create result");
+        };
+        assert_ne!(workspace.workspace_id, source_id);
+        assert_eq!(
+            app.state.workspaces[0].worktree_space.as_ref(),
+            Some(&changed)
+        );
+        let target = app
+            .state
+            .workspaces
+            .iter()
+            .find(|w| w.id == workspace.workspace_id)
+            .unwrap();
+        assert_eq!(target.worktree_space.as_ref().unwrap().repo_root, repo);
+        assert_eq!(
+            app.state
+                .organization
+                .mission_for(&crate::organization::MissionTarget::Tab {
+                    tab_id: tab.tab_id.clone()
+                }),
+            Some(&mission.id)
+        );
+        assert_eq!(
+            app.state
+                .organization
+                .effective_pane_mission(&root_pane.pane_id, &tab.tab_id),
+            Some(&mission.id)
+        );
+        assert!(app.state.workspaces.iter().any(|w| w.id != source_id
+            && w.worktree_space
+                .as_ref()
+                .is_some_and(|m| !m.is_linked_worktree && m.repo_root == repo)));
+        app.state.assert_invariants_for_test();
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        for path in [checkout, repo, other] {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+
+    #[tokio::test]
     async fn mc_s1_failed_worktree_create_after_git_success_preserves_standalone_membership() {
         let repo = create_committed_repo("mc-s1-create-failure");
         let worktree_root = unique_temp_path("mc-s1-create-failure-checkouts");
@@ -1149,6 +1487,7 @@ mod tests {
         app.handle_api_worktree_add_finished(WorktreeAddResult {
             path: checkout.clone(),
             api_request: Some(ApiWorktreeAddRequest {
+                mission_id: None,
                 id: "req".into(),
                 operation_id: 9,
                 checkout_key,
