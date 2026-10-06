@@ -542,6 +542,12 @@
           "description": "Open the session navigator."
         },
         {
+          "key": "keys.mission_control",
+          "type": "keybinding",
+          "default": "\"prefix+m\"",
+          "description": "Open Mission control Spaces."
+        },
+        {
           "key": "keys.navigate_workspace_up",
           "type": "keybinding",
           "default": "\"up\"",

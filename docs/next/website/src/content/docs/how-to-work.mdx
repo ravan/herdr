@@ -126,3 +126,13 @@ JSON callers use `mission.assign_pane` with `pane_id` and `mission_id`, and `mis
 
 
 Servers that do not advertise mission methods retain their existing collection and terminal controls.
+
+## Mission control
+
+Choose **Mission control** in the menu or press `ctrl+b m` to open **Spaces**. Configure another binding with `keys.mission_control`, using the same syntax as other actions.
+
+Search workspace and tab names, branches, actual locations, collection names, mission assignments, and available pane or agent labels. Search includes parked targets marked **Hibernate**, even when their collection or family is collapsed. Click collection, family, or Hibernate headings to expand or collapse this overview. These choices belong to the client.
+
+Use the arrow keys or Page Up/Page Down to select, Enter or a row click to jump, and the wheel or scrollbar to scroll. Narrow terminals use compact rows. Each result identifies an existing workspace, tab, or pane. A jump reveals a parked location without bringing its collection back. A closed or disconnected target shows a persistent local notice; it does not redirect to another target with the same name.
+
+While the overview is open, search text, paste, keys, and mouse input belong to it. Press Escape or click **esc close** to cancel and keep the original pane focus, scrollback, zoom, layout, and running jobs. Catalogs remain separate for each endpoint.

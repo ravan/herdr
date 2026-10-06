@@ -43,6 +43,11 @@ impl ClientShellState {
                     self.begin_worktree_action(action, outcome);
                     return;
                 }
+                if action == crate::input::KeybindAction::OpenMissionControl {
+                    self.open_mission_control();
+                    outcome.repaint = true;
+                    return;
+                }
                 if action == crate::input::KeybindAction::OpenNavigator {
                     self.open_navigator_overlay();
                     outcome.repaint = true;
@@ -571,6 +576,11 @@ impl ClientShellState {
             self.endpoint_notice_seen.remove(&timeout_key);
         }
         if let Err(error) = &result {
+            if matches!(pending.kind, PendingEndpointKind::MissionControlFocus) {
+                let mut input = ClientShellInput::default();
+                self.space_target_notice(&error.message, &mut input);
+                return (true, Vec::new());
+            }
             if self
                 .pending_workspace_highlight
                 .as_ref()
@@ -621,7 +631,7 @@ impl ClientShellState {
             }
         }
         match pending.kind {
-            PendingEndpointKind::Generic => {}
+            PendingEndpointKind::Generic | PendingEndpointKind::MissionControlFocus => {}
             PendingEndpointKind::PaneLinkResolve { .. } => unreachable!("handled above"),
             PendingEndpointKind::ProductAnnouncementDismiss { version, id } => {
                 return match result {

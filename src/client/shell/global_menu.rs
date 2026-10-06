@@ -54,6 +54,10 @@ pub(super) fn global_menu_items(
         "detach",
         ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Detach),
     ));
+    items.push((
+        "Mission control",
+        ClientGlobalMenuAction::Binding(crate::input::KeybindAction::OpenMissionControl),
+    ));
     items
 }
 

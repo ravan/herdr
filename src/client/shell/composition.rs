@@ -155,6 +155,8 @@ impl ClientShellState {
         cols: u16,
         rows: u16,
     ) -> Option<crate::client::frame_output::ComposedFrame> {
+        self.refresh_mission_control();
+        self.prepare_mission_control_geometry(cols, rows);
         self.last_composed_at = Some(std::time::Instant::now());
         self.selection_repaint_deadline = None;
         if self.last_composed_size != Some((cols, rows)) && self.mode == ClientShellMode::Navigate {
@@ -681,6 +683,9 @@ impl ClientShellState {
                 self.hits.overlay_primary = rendered.primary;
                 self.hits.overlay_clear = rendered.clear;
                 self.hits.overlay_cancel = rendered.cancel;
+                self.hits.mission_control_rows = rendered.mission_control_rows;
+                self.hits.mission_control_scrollbar = rendered.mission_control_scrollbar;
+                self.hits.mission_control_scroll_metrics = rendered.mission_control_scroll_metrics;
                 self.hits.navigator_popup = rendered.navigator_popup;
                 self.hits.navigator_search = rendered.navigator_search;
                 self.hits.navigator_rows = rendered.navigator_rows;

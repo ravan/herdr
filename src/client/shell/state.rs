@@ -120,6 +120,9 @@ pub(super) struct ShellHitMap {
     pub(super) overlay_primary: Rect,
     pub(super) overlay_clear: Rect,
     pub(super) overlay_cancel: Rect,
+    pub(super) mission_control_rows: Vec<(Rect, super::mission_control::SpaceSelection)>,
+    pub(super) mission_control_scrollbar: Rect,
+    pub(super) mission_control_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) navigator_popup: Rect,
     pub(super) navigator_search: Rect,
     pub(super) navigator_rows: Vec<(Rect, ClientNavigatorTarget)>,
@@ -287,6 +290,7 @@ pub(super) enum ClientShellOverlayKind {
     ConfirmClose,
     Help,
     Navigator,
+    MissionControl,
     WorktreeCreate,
     WorktreeOpen,
     WorktreeRemove,
@@ -631,6 +635,7 @@ pub(super) enum ClientShellOverlay {
     ConfirmClose(ClientConfirmCloseOverlay),
     Help(ClientHelpOverlay),
     Navigator(ClientNavigatorOverlay),
+    MissionControl(Box<super::mission_control::MissionControl>),
     WorktreeCreate(ClientWorktreeCreateOverlay),
     WorktreeOpen(ClientWorktreeOpenOverlay),
     WorktreeRemove(ClientWorktreeRemoveOverlay),
@@ -649,6 +654,7 @@ impl ClientShellOverlay {
             Self::ConfirmClose(_) => ClientShellOverlayKind::ConfirmClose,
             Self::Help(_) => ClientShellOverlayKind::Help,
             Self::Navigator(_) => ClientShellOverlayKind::Navigator,
+            Self::MissionControl(_) => ClientShellOverlayKind::MissionControl,
             Self::WorktreeCreate(_) => ClientShellOverlayKind::WorktreeCreate,
             Self::WorktreeOpen(_) => ClientShellOverlayKind::WorktreeOpen,
             Self::WorktreeRemove(_) => ClientShellOverlayKind::WorktreeRemove,
@@ -662,6 +668,7 @@ impl ClientShellOverlay {
 #[derive(Debug)]
 pub(super) enum PendingEndpointKind {
     Generic,
+    MissionControlFocus,
     ProductAnnouncementDismiss {
         version: String,
         id: String,
@@ -1348,10 +1355,14 @@ impl ClientShellState {
         self.endpoint_error_deadline = None;
         self.navigate_workspace_id = None;
         self.pending_workspace_highlight = None;
-        self.overlay = self
-            .config
-            .startup_onboarding
-            .then_some(ClientShellOverlay::Onboarding);
+        // Keep captured overview targets across endpoint replacement so Enter fails
+        // against the old boot/generation instead of reaching a reused public ID.
+        if !matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_))) {
+            self.overlay = self
+                .config
+                .startup_onboarding
+                .then_some(ClientShellOverlay::Onboarding);
+        }
         self.previous_pane_id = None;
         self.pane_mouse_gesture = None;
         self.link_hover = None;
@@ -1758,7 +1769,11 @@ impl ClientShellState {
             self.navigate_workspace_id = None;
             if !matches!(
                 self.overlay.as_ref(),
-                Some(ClientShellOverlay::Onboarding | ClientShellOverlay::ProductAnnouncement(_))
+                Some(
+                    ClientShellOverlay::Onboarding
+                        | ClientShellOverlay::ProductAnnouncement(_)
+                        | ClientShellOverlay::MissionControl(_)
+                )
             ) {
                 self.overlay = self
                     .config

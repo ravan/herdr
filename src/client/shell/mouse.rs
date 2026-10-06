@@ -677,6 +677,14 @@ impl ClientShellState {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
+        if matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_))) {
+            // Finish a press already owed to a terminal; all new gestures belong
+            // to the overview, including clicks outside its visible panel.
+            if !matches!(mouse.kind, MouseEventKind::Up(_)) || self.pane_mouse_gesture.is_none() {
+                self.handle_mission_control_mouse(mouse, outcome);
+                return;
+            }
+        }
         self.update_link_hover(mouse, outcome);
         let point = (mouse.column, mouse.row);
         if self.mode == ClientShellMode::Navigate

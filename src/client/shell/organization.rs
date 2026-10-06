@@ -184,7 +184,11 @@ impl ClientShellState {
         if self
             .organization_notices
             .get(&self.active_endpoint_id)
-            .is_some_and(|notice| Some(notice.key.boot_id.as_str()) != boot)
+            .is_some_and(|notice| {
+                // A failed overview jump is client history, not a server fact.
+                notice.key.code != "organization.mission_control.target"
+                    && Some(notice.key.boot_id.as_str()) != boot
+            })
         {
             self.organization_notices.remove(&self.active_endpoint_id);
         }

@@ -1,20 +1,5 @@
 use super::*;
 
-fn catalog(receiver: &std::sync::mpsc::Receiver<Vec<u8>>) -> serde_json::Value {
-    receiver
-        .try_iter()
-        .filter_map(|bytes| match read_server_message(bytes) {
-            ServerMessage::EndpointControl { kind, data } if kind == "endpoint.organization.v1" => {
-                Some(serde_json::from_str(&data).unwrap())
-            }
-            _ => None,
-        })
-        .max_by_key(|catalog: &serde_json::Value| {
-            catalog["organization"]["revision"].as_u64().unwrap()
-        })
-        .expect("a complete organization catalog is delivered")
-}
-
 #[tokio::test]
 async fn mc_s1_endpoint_catalog_reaches_two_clients_and_new_attachments() {
     let mut server = test_headless_server();
@@ -52,16 +37,18 @@ async fn mc_s1_endpoint_catalog_reaches_two_clients_and_new_attachments() {
         }
     }).await.expect("confirmed collection response");
     server.render_and_stream();
-    let first_catalog = catalog(&first);
+    // Endpoint writers deliver on another thread; render completion does not
+    // imply that the confirmed catalog has reached every client yet.
+    let first_catalog = catalog_at_revision(&first, 1);
     assert_eq!(first_catalog["boot_id"], server.client_shell_boot_id);
     assert_eq!(first_catalog["organization"]["revision"], 1);
     assert_eq!(
         first_catalog["organization"]["collections"][0]["name"],
         "Agent workshop"
     );
-    assert_eq!(catalog(&second), first_catalog);
+    assert_eq!(catalog_at_revision(&second, 1), first_catalog);
     let (third, _) = connect_test_shell(&mut server, 73, 80, 24);
-    assert_eq!(catalog(&third), first_catalog);
+    assert_eq!(catalog_at_revision(&third, 1), first_catalog);
     server.app.state.workspaces[0].set_custom_name("renamed workspace".into());
     server.render_and_stream();
     for receiver in [&first, &second, &third] {

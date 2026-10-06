@@ -10,6 +10,9 @@ pub(crate) struct OverlayRender {
     pub(crate) primary: Rect,
     pub(crate) clear: Rect,
     pub(crate) cancel: Rect,
+    pub(crate) mission_control_rows: Vec<(Rect, super::super::mission_control::SpaceSelection)>,
+    pub(crate) mission_control_scrollbar: Rect,
+    pub(crate) mission_control_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(crate) navigator_popup: Rect,
     pub(crate) navigator_search: Rect,
     pub(crate) navigator_rows: Vec<(Rect, ClientNavigatorTarget)>,
@@ -67,6 +70,7 @@ pub(crate) fn render_client_overlay(
         ClientShellOverlay::Navigator(v) => {
             render_navigator_overlay(b, v, endpoints, active_endpoint_id, p)
         }
+        ClientShellOverlay::MissionControl(v) => render_mission_control(b, v, p),
         ClientShellOverlay::Settings(v) => {
             settings_overlay::render_settings_overlay(b, v, s.integration_updates_available, p)
         }
@@ -1316,6 +1320,173 @@ fn render_confirm_close_overlay(
         worktree_search: Rect::default(),
         worktree_rows: Vec::new(),
         cursor: None,
+        ..OverlayRender::default()
+    })
+}
+
+fn render_mission_control(
+    buffer: &mut Buffer,
+    control: &super::super::mission_control::MissionControl,
+    palette: &Palette,
+) -> Option<OverlayRender> {
+    let geometry = control.geometry;
+    let area = geometry.area;
+    if panel(buffer, area, palette.accent, palette.panel_bg).is_none() {
+        return Some(OverlayRender {
+            area,
+            ..OverlayRender::default()
+        });
+    }
+    let style = Style::default()
+        .fg(palette.text)
+        .bg(palette.panel_bg)
+        .remove_modifier(Modifier::DIM);
+    put_text(
+        buffer,
+        geometry.header.x,
+        geometry.header.y,
+        geometry.header.width.saturating_sub(geometry.close.width),
+        "Mission control",
+        style.add_modifier(Modifier::BOLD),
+    );
+    put_text(
+        buffer,
+        geometry.close.x,
+        geometry.close.y,
+        geometry.close.width,
+        " esc close ",
+        style.bg(palette.accent).fg(contrast(palette)),
+    );
+    if geometry.header.height > 0 && geometry.header.y + 1 < area.bottom().saturating_sub(1) {
+        put_text(
+            buffer,
+            geometry.header.x,
+            geometry.header.y + 1,
+            geometry.header.width,
+            "Spaces",
+            style.fg(palette.accent).add_modifier(Modifier::BOLD),
+        );
+    }
+    let search = Rect::new(
+        geometry.search.x.saturating_add(2),
+        geometry.search.y,
+        geometry.search.width.saturating_sub(2),
+        geometry.search.height,
+    );
+    put_text(
+        buffer,
+        geometry.search.x,
+        geometry.search.y,
+        geometry.search.width.min(2),
+        "/ ",
+        style.fg(palette.overlay0),
+    );
+    let cursor = text_editor::render(buffer, search, &control.query, style);
+    let body = geometry.body;
+    for (index, row) in control
+        .rows
+        .iter()
+        .enumerate()
+        .skip(control.scroll)
+        .take(usize::from(body.height))
+    {
+        let rect = Rect::new(
+            body.x,
+            body.y + (index - control.scroll) as u16,
+            body.width,
+            1,
+        );
+        let selected =
+            row.selection.is_some() && row.selection.as_ref() == control.selected.as_ref();
+        let row_style = if selected {
+            style.bg(palette.active_row_bg).add_modifier(Modifier::BOLD)
+        } else {
+            style
+        };
+        buffer.set_style(rect, row_style);
+        if rect.width < 60 {
+            let public_id = match &row.selection {
+                Some(super::super::mission_control::SpaceSelection::Target(target)) => {
+                    target.public_id()
+                }
+                _ => "",
+            };
+            let id_width = display_width(public_id).min(rect.width);
+            let indent = row.depth.min(2);
+            let prefix = format!(
+                "{}{}{}",
+                " ".repeat(usize::from(indent)),
+                control.row_marker(row),
+                if row.parked { "[Hibernate] " } else { "" }
+            );
+            let label_width = rect
+                .width
+                .saturating_sub(id_width + u16::from(id_width > 0));
+            put_text(
+                buffer,
+                rect.x,
+                rect.y,
+                label_width,
+                &format!("{prefix}{}", row.label),
+                row_style,
+            );
+            put_text(
+                buffer,
+                rect.right().saturating_sub(id_width),
+                rect.y,
+                id_width,
+                public_id,
+                row_style.fg(palette.overlay1),
+            );
+            continue;
+        }
+        let marker = control.row_marker(row);
+        let detail = if row.parked {
+            format!(" [Hibernate] · {}", row.detail)
+        } else if row.detail.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", row.detail)
+        };
+        put_text(
+            buffer,
+            rect.x,
+            rect.y,
+            rect.width,
+            &format!(
+                "{}{marker}{}{detail}",
+                " ".repeat(usize::from(row.depth) * 2),
+                row.label
+            ),
+            row_style,
+        );
+    }
+    let metrics = control.scroll_metrics();
+    super::super::scroll::render_list_scrollbar(buffer, geometry.scrollbar, metrics, palette);
+    let footer = control
+        .error
+        .as_ref()
+        .map(|error| format!("Target unavailable: {error}"))
+        .unwrap_or_else(|| "↑↓ select · enter jump · wheel scroll".into());
+    put_text(
+        buffer,
+        geometry.footer.x,
+        geometry.footer.y,
+        geometry.footer.width,
+        &footer,
+        if control.error.is_some() {
+            style.fg(palette.red)
+        } else {
+            style.fg(palette.overlay0)
+        },
+    );
+    Some(OverlayRender {
+        area,
+        cursor,
+        cancel: geometry.close,
+        mission_control_rows: control.hit_rows(),
+        mission_control_scrollbar: geometry.scrollbar,
+        mission_control_scroll_metrics: Some(metrics),
         ..OverlayRender::default()
     })
 }
