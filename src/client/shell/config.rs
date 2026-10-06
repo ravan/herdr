@@ -49,6 +49,25 @@ impl ClientShellState {
             .collect::<Vec<_>>();
         remote_collapsed_groups.sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
         let preferences = preferences::ClientChromePreferences {
+            collection_collapses: self
+                .collapsed_collections
+                .iter()
+                .filter_map(|(endpoint, ids)| {
+                    if ids.is_empty() {
+                        return None;
+                    }
+                    let profile_id = match endpoint {
+                        ClientEndpointId::Local => None,
+                        ClientEndpointId::Ssh(profile) => Some(profile.to_string()),
+                    };
+                    let mut collection_ids = ids.iter().map(|id| id.0.clone()).collect::<Vec<_>>();
+                    collection_ids.sort();
+                    Some(preferences::ClientCollectionCollapse {
+                        profile_id,
+                        collection_ids,
+                    })
+                })
+                .collect(),
             sidebar_width: self.sidebar_width_manual.then_some(self.sidebar_width),
             sidebar_section_split: self
                 .sidebar_section_split_manual

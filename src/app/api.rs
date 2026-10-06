@@ -5,6 +5,7 @@ mod agents;
 mod env;
 mod integrations;
 mod layouts;
+mod organization;
 mod panes;
 pub(crate) mod plugins;
 pub(super) mod responses;
@@ -1031,6 +1032,13 @@ impl App {
                 );
             }
             Method::SessionSnapshot(_) => return self.handle_session_snapshot(request.id),
+            Method::OrganizationGet(_) => return self.handle_organization_get(request.id),
+            Method::CollectionCreate(params) => {
+                return self.handle_collection_create(request.id, params)
+            }
+            Method::CollectionAssignFamily(params) => {
+                return self.handle_collection_assign_family(request.id, params)
+            }
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
             Method::WorkspaceGet(target) => return self.handle_workspace_get(request.id, target),
             Method::WorkspaceCreate(params) => {
@@ -1376,6 +1384,82 @@ pub(super) mod test_support {
 mod tests {
     use super::*;
     use crate::detect::{Agent, AgentState};
+
+    #[test]
+    fn mc_s1_json_create_collection_returns_a_confirmed_catalog() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.session_dirty = false;
+        let request = serde_json::from_value(serde_json::json!({
+            "id": "create", "method": "collection.create",
+            "params": { "name": "Agent workshop" }
+        }))
+        .expect("collection.create is a public JSON method");
+        let created: serde_json::Value =
+            serde_json::from_str(&app.handle_api_request(request)).unwrap();
+        let collection = &created["result"]["collection"];
+        assert_eq!(created["result"]["type"], "collection_created");
+        assert!(!collection["id"].as_str().unwrap().is_empty());
+        assert_eq!(collection["name"], "Agent workshop");
+        assert_eq!(collection["order"], 0);
+        assert_eq!(collection["hibernating"], false);
+        assert_eq!(created["result"]["organization"]["revision"], 1);
+        assert!(app.state.session_dirty);
+        let request = serde_json::from_value(serde_json::json!({
+            "id": "get", "method": "organization.get", "params": {}
+        }))
+        .unwrap();
+        let read: serde_json::Value =
+            serde_json::from_str(&app.handle_api_request(request)).unwrap();
+        assert_eq!(
+            read["result"]["organization"],
+            created["result"]["organization"]
+        );
+    }
+
+    #[test]
+    fn mc_s1_json_collection_names_are_trimmed_and_empty_names_leave_state_unchanged() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let request = serde_json::from_value(serde_json::json!({
+            "id": "valid", "method": "collection.create", "params": {"name": " Agent workshop "}
+        }))
+        .unwrap();
+        let valid: serde_json::Value =
+            serde_json::from_str(&app.handle_api_request(request)).unwrap();
+        assert_eq!(valid["result"]["collection"]["name"], "Agent workshop");
+        app.state.session_dirty = false;
+        let request = serde_json::from_value(serde_json::json!({
+            "id": "invalid", "method": "collection.create", "params": {"name": " \t\n "}
+        }))
+        .unwrap();
+        let invalid: serde_json::Value =
+            serde_json::from_str(&app.handle_api_request(request)).unwrap();
+        assert_eq!(invalid["error"]["code"], "invalid_collection_name");
+        let request = serde_json::from_value(serde_json::json!({
+            "id": "read", "method": "organization.get", "params": {}
+        }))
+        .unwrap();
+        let read: serde_json::Value =
+            serde_json::from_str(&app.handle_api_request(request)).unwrap();
+        assert_eq!(
+            read["result"]["organization"],
+            valid["result"]["organization"]
+        );
+        assert!(!app.state.session_dirty);
+    }
 
     #[cfg(unix)]
     fn init_repo(path: &std::path::Path) {

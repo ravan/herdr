@@ -93,11 +93,15 @@ impl App {
         let target_is_source = canonical_path == canonical_source;
         let already_open = self.open_workspace_idx_for_checkout(&canonical_path);
         let defer_source_created_event = target_is_source && already_open.is_none();
-        let created_source_workspace =
+        let delayed_source_membership = source.workspace_idx.is_some() && !target_is_source;
+        let created_source_workspace = if delayed_source_membership {
+            false
+        } else {
             match self.ensure_source_parent_membership(&mut source, !defer_source_created_event) {
                 Ok(created) => created,
                 Err(err) => return encode_error(id, err.code, err.message),
-            };
+            }
+        };
         let (ws_idx, created_workspace) = if let Some(ws_idx) = already_open {
             if params.focus {
                 self.state.switch_workspace(ws_idx);
@@ -117,6 +121,13 @@ impl App {
                 Err(err) => return encode_error(id, "worktree_open_failed", err.to_string()),
             }
         };
+        if delayed_source_membership {
+            if let Err(err) =
+                self.ensure_source_parent_membership(&mut source, !defer_source_created_event)
+            {
+                return encode_error(id, err.code, err.message);
+            }
+        }
         self.mark_worktree_membership(
             &source,
             ws_idx,
@@ -336,15 +347,23 @@ impl App {
         membership: crate::workspace::WorktreeSpaceMembership,
         emit_update: bool,
     ) {
-        let changed = if let Some(workspace) = self.state.workspaces.get_mut(ws_idx) {
-            if workspace.worktree_space.as_ref() == Some(&membership) {
-                false
-            } else {
-                workspace.worktree_space = Some(membership);
-                true
+        let Some(workspace_id) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .map(|workspace| workspace.id.clone())
+        else {
+            return;
+        };
+        let changed = match self
+            .state
+            .set_workspace_worktree_membership(&workspace_id, membership)
+        {
+            Ok(changed) => changed,
+            Err(code) => {
+                tracing::error!(code, "cannot establish worktree family membership");
+                return;
             }
-        } else {
-            false
         };
         if changed {
             self.state.mark_session_dirty();
@@ -705,6 +724,106 @@ mod tests {
         response_rx
             .recv_timeout(std::time::Duration::from_secs(2))
             .expect("deferred API request should respond after completion event")
+    }
+
+    #[tokio::test]
+    async fn mc_s1_failed_worktree_create_after_git_success_preserves_standalone_membership() {
+        let repo = create_committed_repo("mc-s1-create-failure");
+        let worktree_root = unique_temp_path("mc-s1-create-failure-checkouts");
+        let mut app = app_with_parent(&repo);
+        app.state.default_shell = "/herdr-mc-s1-nonexistent-shell".into();
+        app.state.worktree_directory = worktree_root.clone();
+        let collection = app
+            .state
+            .create_collection("Agent workshop".into())
+            .unwrap();
+        let family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+        app.state
+            .assign_family_to_collection(family, collection.id)
+            .unwrap();
+        let before = app.state.organization.clone();
+        let membership = app.state.workspaces[0].worktree_space.clone();
+        let workspace_id = app.state.workspaces[0].id.clone();
+        let response = run_deferred_api_request(
+            &mut app,
+            Request {
+                id: "create".into(),
+                method: crate::api::schema::Method::WorktreeCreate(WorktreeCreateParams {
+                    workspace_id: Some(workspace_id),
+                    branch: Some("worktree/mc-s1-failed-open".into()),
+                    focus: false,
+                    ..Default::default()
+                }),
+            },
+        );
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "worktree_open_failed");
+        assert_eq!(app.state.organization, before);
+        assert_eq!(app.state.workspaces[0].worktree_space, membership);
+        assert_eq!(app.state.workspaces.len(), 1);
+        app.state.assert_invariants_for_test();
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("refs/heads/worktree/mc-s1-failed-open"),
+            "Git created the checkout before terminal allocation failed"
+        );
+        let _ = std::fs::remove_dir_all(worktree_root);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
+    async fn mc_s1_failed_worktree_open_preserves_standalone_membership() {
+        let repo = create_committed_repo("mc-s1-open-failure");
+        let checkout = unique_temp_path("mc-s1-open-failure-checkout");
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "worktree/mc-s1-open-failure",
+                checkout.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        let mut app = app_with_parent(&repo);
+        app.state.default_shell = "/herdr-mc-s1-nonexistent-shell".into();
+        let collection = app
+            .state
+            .create_collection("Agent workshop".into())
+            .unwrap();
+        let family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+        app.state
+            .assign_family_to_collection(family, collection.id)
+            .unwrap();
+        let before = app.state.organization.clone();
+        let workspace_id = app.state.workspaces[0].id.clone();
+        let response = run_deferred_api_request(
+            &mut app,
+            Request {
+                id: "open".into(),
+                method: crate::api::schema::Method::WorktreeOpen(WorktreeOpenParams {
+                    workspace_id: Some(workspace_id),
+                    branch: Some("worktree/mc-s1-open-failure".into()),
+                    focus: false,
+                    ..Default::default()
+                }),
+            },
+        );
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "worktree_open_failed");
+        assert_eq!(app.state.organization, before);
+        assert!(app.state.workspaces[0].worktree_space.is_none());
+        app.state.assert_invariants_for_test();
+        let _ = std::fs::remove_dir_all(checkout);
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[tokio::test]

@@ -83,6 +83,7 @@ pub(super) enum ClientMobileTarget {
 
 #[derive(Default)]
 pub(super) struct ShellHitMap {
+    pub(super) collections: Vec<(Rect, ClientEndpointId, crate::organization::CollectionId)>,
     pub(super) machines: Vec<MachineHit>,
     pub(super) workspaces: Vec<WorkspaceHit>,
     pub(super) workspace_body: Rect,
@@ -295,6 +296,7 @@ pub(super) enum ClientShellOverlayKind {
 
 #[derive(Debug)]
 pub(super) enum ClientRenameTarget {
+    NewCollection,
     NewWorkspace {
         source_workspace_id: Option<String>,
         cwd: Option<String>,
@@ -510,6 +512,8 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
+    MoveFamilyToCollection,
+    AssignCollection(usize),
     Rename,
     Close,
     NewWorktree,
@@ -529,6 +533,11 @@ pub(super) enum ClientContextMenuAction {
 
 #[derive(Debug)]
 pub(super) enum ClientContextMenuTarget {
+    CollectionPicker {
+        workspace: WorkspaceNavigationTarget,
+        family_id: crate::organization::FamilyId,
+        collections: Vec<crate::organization::Collection>,
+    },
     Workspace {
         workspace_id: String,
         is_git: bool,
@@ -559,7 +568,7 @@ pub(super) struct ClientContextMenuOverlay {
 }
 
 pub(super) struct ClientContextMenuItem {
-    pub(super) label: &'static str,
+    pub(super) label: String,
     pub(super) action: ClientContextMenuAction,
 }
 
@@ -697,7 +706,9 @@ pub(super) struct ClientEndpointNoticeKey {
     pub(super) code: String,
 }
 
+#[derive(Clone)]
 pub(super) struct ClientVisibleEndpointNotice {
+    pub(super) persistent: bool,
     pub(super) key: ClientEndpointNoticeKey,
     pub(super) title: String,
     pub(super) body: String,
@@ -880,6 +891,8 @@ pub(crate) struct ClientShellState {
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
     pub(super) collapsed_groups: HashSet<String>,
+    pub(super) collapsed_collections:
+        HashMap<ClientEndpointId, HashSet<crate::organization::CollectionId>>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
@@ -932,12 +945,14 @@ pub(crate) struct ClientShellState {
     pub(super) popup_pending_deadline: Option<std::time::Instant>,
     pub(super) next_request_id: u64,
     pub(super) pending_requests: HashMap<String, PendingEndpointRequest>,
+    pub(super) organization_pending: Option<&'static str>,
     pub(super) pending_integration_installs: usize,
     pub(super) pending_notifications: Vec<ClientPendingNotification>,
     pub(super) visible_notification: Option<ClientVisibleNotification>,
     pub(super) queued_notifications: VecDeque<ClientVisibleNotification>,
     pub(super) endpoint_notice_seen: HashSet<ClientEndpointNoticeKey>,
     pub(super) visible_endpoint_notice: Option<ClientVisibleEndpointNotice>,
+    pub(super) organization_notices: HashMap<ClientEndpointId, ClientVisibleEndpointNotice>,
     pub(super) outer_focused: Option<bool>,
     pub(super) ascii_input_source_active: bool,
     pub(super) pending_input_source_changes: Vec<bool>,
@@ -975,7 +990,7 @@ pub(super) fn release_notes_state(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct WorkspaceEntry {
     pub(super) index: usize,
     pub(super) indented: bool,
@@ -1045,6 +1060,26 @@ impl ClientShellState {
             workspace_press: None,
             tab_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
+            collapsed_collections: preferences
+                .collection_collapses
+                .into_iter()
+                .filter_map(|saved| {
+                    let endpoint = match saved.profile_id {
+                        Some(profile) => ClientEndpointId::Ssh(
+                            crate::client::endpoint::ProfileId::parse(profile).ok()?,
+                        ),
+                        None => ClientEndpointId::Local,
+                    };
+                    Some((
+                        endpoint,
+                        saved
+                            .collection_ids
+                            .into_iter()
+                            .map(crate::organization::CollectionId)
+                            .collect(),
+                    ))
+                })
+                .collect(),
             remote_collapsed_groups,
             workspace_scroll: 0,
             agent_scroll: 0,
@@ -1097,12 +1132,14 @@ impl ClientShellState {
             popup_pending_deadline: None,
             next_request_id: 1,
             pending_requests: HashMap::new(),
+            organization_pending: None,
             pending_integration_installs: 0,
             pending_notifications: Vec::new(),
             visible_notification: None,
             queued_notifications: VecDeque::new(),
             endpoint_notice_seen: HashSet::new(),
             visible_endpoint_notice: None,
+            organization_notices: HashMap::new(),
             outer_focused: None,
             ascii_input_source_active: false,
             pending_input_source_changes: Vec::new(),
@@ -1168,6 +1205,7 @@ impl ClientShellState {
         if !groups.remove(&key) {
             groups.insert(key);
         }
+        self.rebuild_organization_rows(endpoint_id);
     }
 
     pub(super) fn navigation_workspace_entries(
@@ -1178,11 +1216,17 @@ impl ClientShellState {
         if self.mobile_layout_active() {
             render::workspace_entries(snapshot, &empty_collapsed_groups)
         } else {
-            render::workspace_entries(
-                snapshot,
-                self.collapsed_groups_for_endpoint(&self.active_endpoint_id)
-                    .unwrap_or(&empty_collapsed_groups),
-            )
+            self.endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+                .and_then(super::organization::collection_workspace_entries)
+                .unwrap_or_else(|| {
+                    render::workspace_entries(
+                        snapshot,
+                        self.collapsed_groups_for_endpoint(&self.active_endpoint_id)
+                            .unwrap_or(&empty_collapsed_groups),
+                    )
+                })
         }
     }
 
@@ -1245,6 +1289,7 @@ impl ClientShellState {
         self.last_composed_at = None;
         self.selection_repaint_deadline = None;
         self.pending_requests.clear();
+        self.organization_pending = None;
         self.pane_scroll_in_flight.clear();
         self.pane_scroll_queued.clear();
         self.pane_scroll_targets.clear();

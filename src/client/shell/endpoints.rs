@@ -22,6 +22,12 @@ pub(crate) struct ClientShellEndpoint {
     pending_agent_view_projection: Option<ClientEndpointAgentViewProjection>,
     pub(crate) agent_view_projection_supported: bool,
     pub(crate) methods: Option<HashSet<String>>,
+    pub(crate) organization_supported: bool,
+    pub(crate) organization: Option<crate::protocol::endpoint::EndpointOrganizationCatalog>,
+    pub(crate) organization_generation: Option<u64>,
+    pub(crate) pending_organization:
+        Option<(u64, crate::protocol::endpoint::EndpointOrganizationCatalog)>,
+    pub(super) organization_rows: Vec<super::organization::CollectionRow>,
 }
 
 pub(super) struct MachineHit {
@@ -88,6 +94,16 @@ impl ClientShellState {
                 agent_view_projection_supported: previous
                     .is_some_and(|endpoint| endpoint.agent_view_projection_supported),
                 methods: previous.and_then(|endpoint| endpoint.methods.clone()),
+                organization_supported: previous
+                    .is_some_and(|endpoint| endpoint.organization_supported),
+                organization: previous.and_then(|endpoint| endpoint.organization.clone()),
+                organization_generation: previous
+                    .and_then(|endpoint| endpoint.organization_generation),
+                pending_organization: previous
+                    .and_then(|endpoint| endpoint.pending_organization.clone()),
+                organization_rows: previous
+                    .map(|endpoint| endpoint.organization_rows.clone())
+                    .unwrap_or_default(),
             });
         }
 
@@ -134,6 +150,7 @@ impl ClientShellState {
             endpoint.pending_agent_view_projection = None;
             endpoint.agent_view_projection_supported = false;
         }
+        self.set_endpoint_organization_supported(endpoint_id, false);
     }
 
     pub(crate) fn set_endpoint_status(
@@ -161,6 +178,7 @@ impl ClientShellState {
 
     pub(crate) fn mark_endpoint_disconnected(&mut self, endpoint_id: &ClientEndpointId) {
         self.set_endpoint_status(endpoint_id, ClientEndpointStatus::Reconnecting);
+        self.set_endpoint_organization_supported(endpoint_id, false);
         if endpoint_id == &self.active_endpoint_id {
             let pending = self.pending_requests.keys().cloned().collect::<Vec<_>>();
             for request_id in pending {
@@ -235,11 +253,19 @@ impl ClientShellState {
         let switching_endpoint = endpoint_id != &self.active_endpoint_id;
         let agent_scroll = self.agent_scroll;
         if switching_endpoint {
+            if self
+                .visible_endpoint_notice
+                .as_ref()
+                .is_some_and(|notice| notice.persistent)
+            {
+                self.visible_endpoint_notice = None;
+            }
             self.active_endpoint_id = endpoint_id.clone();
             self.pane_surface = None;
             self.pending_pane_surface = None;
         }
         self.apply_active_snapshot(snapshot, generation);
+        self.restore_organization_notice();
         if switching_endpoint {
             // The aggregate agent list belongs to the client, not one endpoint.
             self.agent_scroll = agent_scroll;
@@ -571,6 +597,22 @@ impl ClientShellState {
             .snapshot
             .as_deref()
             .is_some_and(|previous| previous.boot_id != snapshot.boot_id);
+        // Agent/status-only replacements retain the collection row cache.
+        let organization_projection_changed = boot_changed
+            || self.endpoints[index].snapshot_generation != generation
+            || self.endpoints[index]
+                .snapshot
+                .as_ref()
+                .is_none_or(|previous| {
+                    previous.workspaces.len() != snapshot.workspaces.len()
+                        || previous.workspaces.iter().zip(&snapshot.workspaces).any(
+                            |(previous, next)| {
+                                previous.workspace_id != next.workspace_id
+                                    || previous.worktree != next.worktree
+                                    || previous.focused != next.focused
+                            },
+                        )
+                });
         if boot_changed {
             self.retire_endpoint_notifications(endpoint_id);
         }
@@ -651,6 +693,7 @@ impl ClientShellState {
                 endpoint.agent_view_projection = None;
             }
         }
+        self.reconcile_organization(endpoint_id, organization_projection_changed);
     }
 
     pub(crate) fn acknowledge_active_surface_agents(&mut self, surface: &PaneSurfaceFrame) -> bool {
@@ -742,5 +785,10 @@ pub(super) fn local_endpoint() -> ClientShellEndpoint {
         pending_agent_view_projection: None,
         agent_view_projection_supported: false,
         methods: None,
+        organization_supported: false,
+        organization: None,
+        organization_generation: None,
+        pending_organization: None,
+        organization_rows: Vec::new(),
     }
 }

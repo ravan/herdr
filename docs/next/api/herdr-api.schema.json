@@ -1718,6 +1718,32 @@
           ],
           "type": "object"
         },
+        "CollectionAssignFamilyParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "$ref": "#/schemas/request/$defs/FamilyId"
+            }
+          },
+          "required": [
+            "family_id",
+            "collection_id"
+          ],
+          "type": "object"
+        },
+        "CollectionCreateParams": {
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
         "CommandInvokeParams": {
           "properties": {
             "command_id": {
@@ -2150,6 +2176,42 @@
             "match_event"
           ],
           "type": "object"
+        },
+        "FamilyId": {
+          "oneOf": [
+            {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "managed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "key"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "standalone",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "workspace_id"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "IntegrationInstallParams": {
           "properties": {
@@ -4924,6 +4986,54 @@
         {
           "properties": {
             "method": {
+              "const": "organization.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.assign_family",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionAssignFamilyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "workspace.create",
               "type": "string"
             },
@@ -6784,6 +6894,34 @@
           ],
           "type": "string"
         },
+        "Collection": {
+          "properties": {
+            "hibernating": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/schemas/success_response/$defs/CollectionName"
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "order",
+            "hibernating"
+          ],
+          "type": "object"
+        },
+        "CollectionName": {
+          "type": "string"
+        },
         "ConfigReloadStatus": {
           "enum": [
             "applied",
@@ -7485,6 +7623,57 @@
           ],
           "type": "string"
         },
+        "FamilyAssignment": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "$ref": "#/schemas/success_response/$defs/FamilyId"
+            }
+          },
+          "required": [
+            "family_id",
+            "collection_id"
+          ],
+          "type": "object"
+        },
+        "FamilyId": {
+          "oneOf": [
+            {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "managed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "key"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "standalone",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "workspace_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "InstalledPluginInfo": {
           "properties": {
             "actions": {
@@ -7783,6 +7972,33 @@
             "busy"
           ],
           "type": "string"
+        },
+        "OrganizationState": {
+          "properties": {
+            "collections": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/Collection"
+              },
+              "type": "array"
+            },
+            "family_assignments": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/FamilyAssignment"
+              },
+              "type": "array"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "revision",
+            "collections"
+          ],
+          "type": "object"
         },
         "PaneDirection": {
           "enum": [
@@ -9167,6 +9383,42 @@
         },
         "ResponseResult": {
           "oneOf": [
+            {
+              "properties": {
+                "organization": {
+                  "$ref": "#/schemas/success_response/$defs/OrganizationState"
+                },
+                "type": {
+                  "const": "organization",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "organization"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "collection": {
+                  "$ref": "#/schemas/success_response/$defs/Collection"
+                },
+                "organization": {
+                  "$ref": "#/schemas/success_response/$defs/OrganizationState"
+                },
+                "type": {
+                  "const": "collection_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "collection",
+                "organization"
+              ],
+              "type": "object"
+            },
             {
               "properties": {
                 "capabilities": {

@@ -997,6 +997,7 @@ impl ClientShellState {
             && super::contains(self.hits.notification_toast, point)
         {
             self.visible_endpoint_notice = None;
+            self.organization_notices.remove(&self.active_endpoint_id);
             outcome.repaint = true;
             return;
         }
@@ -2023,6 +2024,16 @@ impl ClientShellState {
                     self.agent_scroll = 0;
                     self.persist_chrome_preferences(outcome);
                     outcome.repaint = true;
+                    return;
+                }
+                if let Some((_, endpoint, id)) = self
+                    .hits
+                    .collections
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.toggle_collection(&endpoint, id, outcome);
                     return;
                 }
                 if self.handle_endpoint_machine_click(point, outcome) {

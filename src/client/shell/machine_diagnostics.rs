@@ -115,6 +115,7 @@ impl ClientShellState {
             return true;
         }
         self.visible_endpoint_notice = Some(ClientVisibleEndpointNotice {
+            persistent: false,
             key: ClientEndpointNoticeKey {
                 boot_id: "machine".into(),
                 kind: ClientEndpointNoticeKind::Unavailable,

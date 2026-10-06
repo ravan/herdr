@@ -125,9 +125,11 @@ fn spawn_herdr_with_options(
     fs::create_dir_all(config_home.join("herdr")).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     register_runtime_dir(runtime_dir);
+    let config_path = config_home.join("herdr/config.toml");
+    // Keep user login profiles from shadowing test fixture executables on PATH.
     fs::write(
-        config_home.join("herdr/config.toml"),
-        "onboarding = false\n",
+        &config_path,
+        "onboarding = false\n[terminal]\nshell_mode = \"non_login\"\n",
     )
     .unwrap();
 
@@ -143,6 +145,7 @@ fn spawn_herdr_with_options(
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_herdr"));
     support::isolate_herdr_test_process(&mut cmd);
     cmd.arg("server");
+    cmd.env("HERDR_CONFIG_PATH", &config_path);
     cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
     cmd.env("HERDR_SOCKET_PATH", socket_path);

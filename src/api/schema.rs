@@ -5,6 +5,7 @@ pub mod commands;
 pub mod common;
 pub mod events;
 pub mod integrations;
+pub mod organization;
 pub mod panes;
 pub mod plugins;
 pub mod response;
@@ -19,6 +20,7 @@ pub use commands::*;
 pub use common::*;
 pub use events::*;
 pub use integrations::*;
+pub use organization::*;
 pub use panes::*;
 pub use plugins::*;
 pub use response::*;
@@ -75,6 +77,12 @@ pub enum Method {
     ClientShellSurfaceSet(ClientShellSurfaceSetParams),
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(EmptyParams),
+    #[serde(rename = "organization.get")]
+    OrganizationGet(EmptyParams),
+    #[serde(rename = "collection.create")]
+    CollectionCreate(CollectionCreateParams),
+    #[serde(rename = "collection.assign_family")]
+    CollectionAssignFamily(CollectionAssignFamilyParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
     #[serde(rename = "workspace.list")]

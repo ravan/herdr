@@ -410,9 +410,16 @@ impl App {
             repo_key: api.repo_key,
             repo_name: api.repo_name,
         };
-        if let Err(err) = self.ensure_source_parent_membership(&mut source, true) {
-            Self::send_api_response(api.respond_to, encode_error(api.id, err.code, err.message));
-            return;
+        // Existing standalone membership is committed only after target allocation succeeds.
+        let delayed_source_membership = source.workspace_idx.is_some();
+        if !delayed_source_membership {
+            if let Err(err) = self.ensure_source_parent_membership(&mut source, true) {
+                Self::send_api_response(
+                    api.respond_to,
+                    encode_error(api.id, err.code, err.message),
+                );
+                return;
+            }
         }
 
         let (ws_idx, created_workspace) =
@@ -437,6 +444,16 @@ impl App {
                     }
                 }
             };
+
+        if delayed_source_membership {
+            if let Err(err) = self.ensure_source_parent_membership(&mut source, true) {
+                Self::send_api_response(
+                    api.respond_to,
+                    encode_error(api.id, err.code, err.message),
+                );
+                return;
+            }
+        }
 
         self.mark_worktree_membership(
             &source,

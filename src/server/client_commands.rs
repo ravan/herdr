@@ -14,10 +14,13 @@ const ENDPOINT_RESPONSE_CHUNK_BYTES: usize = 512 * 1024;
 
 const CLIENT_SHELL_METHODS: &[&str] = &[
     "client_shell.surface.set",
+    "collection.assign_family",
+    "collection.create",
     "command.invoke",
     "integration.install",
     "integration.list",
     "layout.set_split_ratio",
+    "organization.get",
     "pane.clear",
     "pane.close",
     "pane.copy_motion",
@@ -289,6 +292,18 @@ mod tests {
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
         // Freeze additive methods separately without rewriting the published fixture.
+        assert_eq!(
+            actual.remove("collection.assign_family").as_deref(),
+            Some("98aee73c135e0f39a4369cd057bb5a11798a70e72a1a2730dc5355a394c475f0")
+        );
+        assert_eq!(
+            actual.remove("collection.create").as_deref(),
+            Some("41b0361540ce644ec1dbdb41da02595bbec2066e5b0f57237881b364a4314aa1")
+        );
+        assert_eq!(
+            actual.remove("organization.get").as_deref(),
+            Some("c95adab401484ee35a49da4baadadc976656e6da91c2ae9f0c9b7b4f58c8a39c")
+        );
         assert_eq!(
             actual.remove("pane.clear").as_deref(),
             Some("0301d288ba198ddaa427dd7421c71911cccaf4ea03544531efa8b67ca21b08f6")

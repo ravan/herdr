@@ -884,6 +884,7 @@ pub struct AppState {
     /// Last known foreground host terminal cell size in pixels.
     pub(crate) host_cell_size: crate::kitty_graphics::HostCellSize,
     /// Set when a persisted session snapshot would change.
+    pub organization: crate::organization::OrganizationState,
     pub session_dirty: bool,
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
@@ -1118,6 +1119,7 @@ impl AppState {
             plugin_commands_in_flight: 0,
             host_terminal_theme: TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
+            organization: crate::organization::OrganizationState::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
         }
@@ -1152,6 +1154,9 @@ impl AppState {
     }
 
     pub fn assert_invariants_for_test(&self) {
+        self.organization
+            .validate()
+            .expect("organization catalog invariants");
         if self.workspaces.is_empty() {
             assert!(
                 self.active.is_none(),

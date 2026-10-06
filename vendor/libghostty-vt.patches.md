@@ -78,9 +78,10 @@ Linux with SIMD disabled, those definitions override the Rust executable's
 libc allocator, causing immediate allocation failures. Limit the stubs to
 freestanding targets; hosted embedders resolve these symbols through libc.
 
-remove when: upstream forwards the build's libc configuration to the Wuffs
-translator and prevents hosted allocator interposition, and both Windows
-cross-compilation and non-SIMD native tests pass without this patch.
+remove when: upstream forwards target-scoped Windows libc configuration to the
+Wuffs translator without passing it to native helpers, prevents hosted allocator
+interposition, and both Windows cross-compilation and non-SIMD native tests pass
+without this patch.
 
 verification:
 
@@ -89,6 +90,10 @@ LIBGHOSTTY_VT_WINDOWS_LIBC=/path/to/windows-libc.txt just windows-lint
 LIBGHOSTTY_VT_SIMD=false just test-one ghostty
 just maintenance-test
 ```
+
+The Wuffs build also accepts `windows-libc` for target-specific SDK translation,
+so its native translator keeps the host SDK. The existing global libc setting
+remains a fallback for upstream standalone builds.
 
 ## 0005 bounded word selection for wrapped link activation
 
@@ -226,5 +231,45 @@ just test-one png_forward_tests
 just test-one kitty_png_replacement
 just test-one kitty_file_image_survives
 (cd vendor/libghostty-vt && zig build test-lib-vt -Dtest-filter='experimental PNG')
+just check
+```
+
+## 0008 scope Windows libc configuration to target artifacts
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0008-scope-windows-libc.patch`
+
+herdr issue: none; discovered during MC-S1 Windows validation on macOS
+
+upstream discussion: not opened
+
+upstream pr: not opened
+
+vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+
+local files:
+
+- `vendor/libghostty-vt/src/build/Config.zig`
+- `vendor/libghostty-vt/src/build/GhosttyZig.zig`
+- `vendor/libghostty-vt/src/build/GhosttyLibVt.zig`
+
+reason: Zig's global `--libc` setting propagates into native build helpers.
+Passing the Windows SDK that way makes macOS helpers search for libSystem in
+the Windows SDK. The `windows-libc` option configures only Windows library
+compilation and is forwarded to the Windows Wuffs translation. Patch 0004
+also accepts this target-specific option while retaining the global setting
+as a fallback for standalone upstream Wuffs builds. Herdr's Cargo build uses
+the target-specific option instead of global `--libc`.
+
+remove when: the vendored upstream provides equivalent target-scoped SDK
+configuration for libghostty-vt and Wuffs, Herdr's Cargo build uses it, and
+Windows cross-lint on macOS passes without this patch.
+
+verification:
+
+```sh
+just windows-lint
+just maintenance-test
 just check
 ```

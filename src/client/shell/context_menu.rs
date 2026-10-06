@@ -4,8 +4,30 @@ impl ClientContextMenuOverlay {
     pub(super) fn items(&self) -> Vec<ClientContextMenuItem> {
         use ClientContextMenuAction as Action;
 
-        let item = |label, action| ClientContextMenuItem { label, action };
-        match &self.target {
+        let item = |label: &str, action| ClientContextMenuItem {
+            label: label.to_owned(),
+            action,
+        };
+        let mut items = match &self.target {
+            ClientContextMenuTarget::CollectionPicker { collections, .. } => collections
+                .iter()
+                .enumerate()
+                .map(|(index, collection)| {
+                    let duplicate = collections
+                        .iter()
+                        .filter(|other| other.name == collection.name)
+                        .count()
+                        > 1;
+                    ClientContextMenuItem {
+                        label: if duplicate {
+                            format!("{} ({})", collection.name.as_str(), collection.id.0)
+                        } else {
+                            collection.name.as_str().to_owned()
+                        },
+                        action: Action::AssignCollection(index),
+                    }
+                })
+                .collect(),
             ClientContextMenuTarget::Workspace { is_git: false, .. } => {
                 vec![item("Rename", Action::Rename), item("Close", Action::Close)]
             }
@@ -79,7 +101,14 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+        };
+        if matches!(self.target, ClientContextMenuTarget::Workspace { .. }) {
+            items.push(item(
+                "Move family to collection...",
+                Action::MoveFamilyToCollection,
+            ));
         }
+        items
     }
 }
 
@@ -192,6 +221,36 @@ impl ClientShellState {
             return;
         };
         match menu.target {
+            ClientContextMenuTarget::CollectionPicker {
+                workspace,
+                family_id,
+                collections,
+            } => {
+                if self.navigation_target_valid(&workspace)
+                    && workspace.endpoint_id == self.active_endpoint_id
+                {
+                    if let ClientContextMenuAction::AssignCollection(index) = action {
+                        if let Some(collection) = collections.get(index) {
+                            self.push_endpoint_method(
+                                crate::api::schema::Method::CollectionAssignFamily(
+                                    crate::api::schema::CollectionAssignFamilyParams {
+                                        family_id,
+                                        collection_id: collection.id.clone(),
+                                    },
+                                ),
+                                outcome,
+                            );
+                        }
+                    }
+                } else {
+                    outcome.repaint |= self.push_endpoint_notice(
+                        ClientEndpointNoticeKind::Rejected,
+                        "stale_family",
+                        "Family unavailable",
+                        "The selected workspace is no longer available.",
+                    );
+                }
+            }
             ClientContextMenuTarget::Workspace {
                 workspace_id,
                 close_group,
@@ -229,6 +288,9 @@ impl ClientShellState {
         use crate::input::KeybindAction;
 
         match action {
+            ClientContextMenuAction::MoveFamilyToCollection => {
+                self.open_collection_picker(workspace_id, outcome)
+            }
             ClientContextMenuAction::Rename => {
                 let label = self
                     .snapshot

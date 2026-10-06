@@ -258,7 +258,7 @@ pub(super) fn render_expanded(
         workspace_area.x,
         workspace_area.y,
         workspace_area.width,
-        " machines",
+        state.organization_pending.unwrap_or(" machines"),
         Style::default()
             .fg(palette.overlay0)
             .add_modifier(Modifier::BOLD),
@@ -268,6 +268,10 @@ pub(super) fn render_expanded(
 
     enum Row {
         Endpoint(usize),
+        Collection {
+            endpoint: usize,
+            index: Option<usize>,
+        },
         Workspace {
             endpoint: usize,
             entry: WorkspaceEntry,
@@ -282,14 +286,34 @@ pub(super) fn render_expanded(
         if let Some(snapshot) = endpoint.snapshot.as_deref() {
             let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
                 .unwrap_or(&empty_collapsed_groups);
-            rows.extend(
-                super::sidebar::workspace_entries(snapshot, collapsed_groups)
-                    .into_iter()
-                    .map(|entry| Row::Workspace {
+            if &endpoint.endpoint_id == state.active_endpoint_id
+                && endpoint.organization_supported
+                && endpoint.organization.is_some()
+            {
+                rows.extend(endpoint.organization_rows.iter().map(|row| match row {
+                    super::organization::CollectionRow::Collection(index) => Row::Collection {
                         endpoint: endpoint_index,
-                        entry,
-                    }),
-            );
+                        index: Some(*index),
+                    },
+                    super::organization::CollectionRow::Uncollected => Row::Collection {
+                        endpoint: endpoint_index,
+                        index: None,
+                    },
+                    super::organization::CollectionRow::Workspace(entry) => Row::Workspace {
+                        endpoint: endpoint_index,
+                        entry: *entry,
+                    },
+                }));
+            } else {
+                rows.extend(
+                    super::sidebar::workspace_entries(snapshot, collapsed_groups)
+                        .into_iter()
+                        .map(|entry| Row::Workspace {
+                            endpoint: endpoint_index,
+                            entry,
+                        }),
+                );
+            }
         }
     }
     let body = Rect::new(
@@ -304,7 +328,7 @@ pub(super) fn render_expanded(
     let row_heights = rows
         .iter()
         .map(|row| match row {
-            Row::Endpoint(_) => 1,
+            Row::Endpoint(_) | Row::Collection { .. } => 1,
             Row::Workspace { endpoint, entry } => {
                 let endpoint = &state.endpoints[*endpoint];
                 let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
@@ -372,7 +396,7 @@ pub(super) fn render_expanded(
                         }
                     })
             }
-            Row::Endpoint(_) => false,
+            Row::Endpoint(_) | Row::Collection { .. } => false,
         });
         if let Some(selected_row) = selected_row {
             *state.workspace_scroll = super::scroll::list_scroll_start_to_reveal(
@@ -431,6 +455,57 @@ pub(super) fn render_expanded(
                 y = y
                     .saturating_add(1)
                     .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
+            }
+            Row::Collection { endpoint, index } => {
+                if y >= body.bottom() {
+                    break;
+                }
+                let endpoint = &state.endpoints[*endpoint];
+                let rect = Rect::new(
+                    body.x.saturating_add(2),
+                    y,
+                    content_width.saturating_sub(2),
+                    1,
+                );
+                if let Some(collection) = index.and_then(|index| {
+                    endpoint
+                        .organization
+                        .as_ref()?
+                        .organization
+                        .collections
+                        .get(index)
+                }) {
+                    let collapsed = state
+                        .collapsed_collections
+                        .get(&endpoint.endpoint_id)
+                        .is_some_and(|ids| ids.contains(&collection.id));
+                    let marker = if collapsed { "▸" } else { "▾" };
+                    put_text(
+                        buffer,
+                        rect.x,
+                        rect.y,
+                        rect.width,
+                        &format!(" {marker} {}", collection.name.as_str()),
+                        Style::default()
+                            .fg(palette.text)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                    hits.collections.push((
+                        rect,
+                        endpoint.endpoint_id.clone(),
+                        collection.id.clone(),
+                    ));
+                } else {
+                    put_text(
+                        buffer,
+                        rect.x,
+                        rect.y,
+                        rect.width,
+                        " Uncollected",
+                        Style::default().fg(palette.overlay0),
+                    );
+                }
+                y = y.saturating_add(1);
             }
             Row::Workspace { endpoint, entry } => {
                 let endpoint = &state.endpoints[*endpoint];

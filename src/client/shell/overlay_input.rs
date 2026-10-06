@@ -929,6 +929,13 @@ impl ClientShellState {
         };
         let trimmed = rename.input.trim();
         let method = match rename.target {
+            ClientRenameTarget::NewCollection => (!trimmed.is_empty()).then(|| {
+                crate::api::schema::Method::CollectionCreate(
+                    crate::api::schema::CollectionCreateParams {
+                        name: trimmed.to_owned(),
+                    },
+                )
+            }),
             ClientRenameTarget::NewWorkspace {
                 source_workspace_id,
                 cwd,

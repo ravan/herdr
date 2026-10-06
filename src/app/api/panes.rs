@@ -1271,6 +1271,12 @@ impl App {
         if focus || self.state.active.is_none() {
             self.state
                 .switch_workspace_tab(target_ws_idx, target_tab_idx);
+            let previous_focus = previous_focus.filter(|target| {
+                self.state.workspaces.iter().any(|workspace| {
+                    workspace.id == target.workspace_id
+                        && workspace.pane_state(target.pane_id).is_some()
+                })
+            });
             self.state
                 .record_pane_focus_change(previous_focus, target_ws_idx, moved_pane_id);
             self.state.mode = crate::app::Mode::Terminal;
@@ -1313,6 +1319,9 @@ impl App {
             closed_tab_id: source_removed_tab_id.clone(),
             focused_pane_id,
         };
+        if let Err(code) = self.state.reconcile_organization_families() {
+            tracing::error!(code, "invalid organization state after pane move");
+        }
         if let Some(closed_tab_id) = &source_removed_tab_id {
             self.emit_event(EventEnvelope {
                 event: EventKind::TabClosed,
@@ -3674,6 +3683,60 @@ mod tests {
             ),
             other => panic!("expected layout updated event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mc_s1_successful_last_pane_move_cleans_the_closed_standalone_family() {
+        let mut app = app_with_linked_worktree();
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        let others = app.state.workspaces[0]
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.layout.pane_ids())
+            .filter(|id| *id != pane)
+            .collect::<Vec<_>>();
+        for pane_id in others {
+            app.state
+                .handle_app_event(crate::events::AppEvent::PaneDied {
+                    pane_id,
+                    exit_reason: crate::platform::ChildExitReason::Exited,
+                });
+        }
+        app.state.assert_invariants_for_test();
+        let terminal = app.state.workspaces[0].tabs[0]
+            .terminal_id(pane)
+            .unwrap()
+            .clone();
+        let collection = app
+            .state
+            .create_collection("Agent workshop".into())
+            .unwrap();
+        let family = crate::app::AppState::family_id(&app.state.workspaces[0]);
+        app.state
+            .assign_family_to_collection(family, collection.id.clone())
+            .unwrap();
+        let request = crate::api::schema::Request {
+            id: "move".into(),
+            method: crate::api::schema::Method::PaneMove(PaneMoveParams {
+                pane_id: app.public_pane_id(0, pane).unwrap(),
+                destination: PaneMoveDestination::NewWorkspace {
+                    label: Some("promoted".into()),
+                    tab_label: None,
+                },
+                focus: true,
+            }),
+        };
+        let response: SuccessResponse =
+            serde_json::from_str(&app.handle_api_request(request)).unwrap();
+        assert!(matches!(response.result, ResponseResult::PaneMove { .. }));
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].terminal_id(pane),
+            Some(&terminal)
+        );
+        assert!(app.state.organization.family_assignments.is_empty());
+        assert_eq!(app.state.organization.collections, vec![collection]);
+        app.state.assert_invariants_for_test();
     }
 
     #[test]

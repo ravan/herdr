@@ -8,6 +8,12 @@ static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(1);
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub(super) struct ClientCollectionCollapse {
+    pub(super) profile_id: Option<String>,
+    pub(super) collection_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct ClientRemoteCollapsedGroups {
     pub(super) profile_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -16,6 +22,8 @@ pub(super) struct ClientRemoteCollapsedGroups {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(super) struct ClientChromePreferences {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) collection_collapses: Vec<ClientCollectionCollapse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) sidebar_width: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

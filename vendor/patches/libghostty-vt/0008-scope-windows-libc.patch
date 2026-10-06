@@ -1,0 +1,63 @@
+--- a/vendor/libghostty-vt/src/build/Config.zig
++++ b/vendor/libghostty-vt/src/build/Config.zig
+@@ -69,6 +69,9 @@
+ /// True when Ghostty is being built as a dependency of another project
+ /// rather than as the root project.
+ is_dep: bool = false,
++
++/// SDK configuration for Windows library artifacts, not native build helpers.
++windows_libc: ?[]const u8 = null,
+
+ /// Environmental properties
+ env: *const std.process.Environ.Map,
+@@ -175,6 +178,7 @@
+         .target = target,
+         .wasm_target = wasm_target,
+         .is_dep = is_dep,
++        .windows_libc = b.option([]const u8, "windows-libc", "Windows library libc configuration"),
+         .env = env,
+     };
+
+--- a/vendor/libghostty-vt/src/build/GhosttyZig.zig
++++ b/vendor/libghostty-vt/src/build/GhosttyZig.zig
+@@ -13,6 +13,9 @@
+
+ /// The libghostty-vt version
+ version: std.SemanticVersion,
++
++/// Target-specific libc configuration forwarded to library compilation.
++windows_libc: ?[]const u8,
+
+ /// Static library paths for vendored SIMD dependencies. Populated
+ /// only when the dependencies are built from source (not provided
+@@ -97,6 +100,7 @@
+         ),
+
+         .version = cfg.lib_version,
++        .windows_libc = cfg.windows_libc,
+
+         .simd_libs = simd_libs,
+     };
+@@ -146,6 +150,7 @@
+         if (b.lazyDependency("wuffs", .{
+             .target = cfg.target,
+             .optimize = cfg.optimize,
++            .@"windows-libc" = if (cfg.target.result.os.tag == .windows) cfg.windows_libc else null,
+         })) |dep| {
+             vt.addImport("wuffs", dep.module("wuffs"));
+         }
+--- a/vendor/libghostty-vt/src/build/GhosttyLibVt.zig
++++ b/vendor/libghostty-vt/src/build/GhosttyLibVt.zig
+@@ -252,6 +252,12 @@
+     }
+
+     if (target.result.os.tag == .windows) {
++        // A global --libc also reaches native build helpers. Keep the SDK
++        // configuration on the Windows library compilation only.
++        if (zig.windows_libc) |libc_file| {
++            lib.setLibCFile(.{ .cwd_relative = libc_file });
++        }
++
+         // Zig's ubsan emits /exclude-symbols linker directives that
+         // are incompatible with the MSVC linker (LNK4229).
+         lib.bundle_ubsan_rt = false;

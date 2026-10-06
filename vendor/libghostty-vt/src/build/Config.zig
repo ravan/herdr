@@ -70,6 +70,9 @@ vt_features: TerminalBuildOptions.Features = .{},
 /// rather than as the root project.
 is_dep: bool = false,
 
+/// SDK configuration for Windows library artifacts, not native build helpers.
+windows_libc: ?[]const u8 = null,
+
 /// Environmental properties
 env: *const std.process.Environ.Map,
 
@@ -175,6 +178,7 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
         .target = target,
         .wasm_target = wasm_target,
         .is_dep = is_dep,
+        .windows_libc = b.option([]const u8, "windows-libc", "Windows library libc configuration"),
         .env = env,
     };
 

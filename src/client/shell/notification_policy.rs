@@ -161,7 +161,7 @@ impl ClientShellState {
         if self
             .visible_endpoint_notice
             .as_ref()
-            .is_some_and(|visible| now >= visible.deadline)
+            .is_some_and(|visible| !visible.persistent && now >= visible.deadline)
         {
             self.visible_endpoint_notice = None;
             repaint = true;

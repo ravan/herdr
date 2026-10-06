@@ -1,0 +1,355 @@
+use super::*;
+
+pub(super) fn pending_label(method: &str) -> Option<&'static str> {
+    match method {
+        "collection.create" => Some(" creating collection…"),
+        "collection.assign_family" => Some(" moving family…"),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum CollectionRow {
+    Collection(usize),
+    Uncollected,
+    Workspace(WorkspaceEntry),
+}
+
+pub(super) fn collection_workspace_entries(
+    endpoint: &ClientShellEndpoint,
+) -> Option<Vec<WorkspaceEntry>> {
+    (endpoint.organization_supported && endpoint.organization.is_some()).then(|| {
+        endpoint
+            .organization_rows
+            .iter()
+            .filter_map(|row| match row {
+                CollectionRow::Workspace(entry) => Some(*entry),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+impl ClientShellState {
+    pub(super) fn restore_organization_notice(&mut self) {
+        let boot = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.boot_id.as_str());
+        if self
+            .organization_notices
+            .get(&self.active_endpoint_id)
+            .is_some_and(|notice| Some(notice.key.boot_id.as_str()) != boot)
+        {
+            self.organization_notices.remove(&self.active_endpoint_id);
+        }
+        if self.visible_endpoint_notice.is_none() {
+            self.visible_endpoint_notice = self
+                .organization_notices
+                .get(&self.active_endpoint_id)
+                .cloned();
+        }
+    }
+    pub(super) fn open_collection_picker(
+        &mut self,
+        workspace_id: String,
+        outcome: &mut ClientShellInput,
+    ) {
+        if !self.organization_available() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Unsupported,
+                "organization",
+                "Action unavailable",
+                "This server does not support collections.",
+            );
+            return;
+        }
+        let Some(workspace) = self.navigation_target(&self.active_endpoint_id, &workspace_id)
+        else {
+            return;
+        };
+        let Some(target) = self.snapshot.as_ref().and_then(|snapshot| {
+            snapshot
+                .workspaces
+                .iter()
+                .find(|target| target.workspace_id == workspace_id)
+        }) else {
+            return;
+        };
+        let family_id = match target.worktree.as_ref() {
+            Some(worktree) => crate::organization::FamilyId::Managed {
+                key: worktree.key.clone(),
+            },
+            None => crate::organization::FamilyId::Standalone { workspace_id },
+        };
+        let collections = self
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+            .and_then(|endpoint| endpoint.organization.as_ref())
+            .map(|catalog| catalog.organization.collections.clone())
+            .unwrap_or_default();
+        if collections.is_empty() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Rejected,
+                "no_collections",
+                "Create a collection first",
+                "Use New collection in the menu to create a destination.",
+            );
+            return;
+        }
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::CollectionPicker {
+                workspace,
+                family_id,
+                collections,
+            },
+            x: self.hits.workspace_body.x,
+            y: self.hits.workspace_body.y,
+            highlighted: 0,
+        }));
+    }
+    pub(crate) fn set_endpoint_organization_supported(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        supported: bool,
+    ) {
+        if let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| &endpoint.endpoint_id == endpoint_id)
+        {
+            endpoint.organization_supported = supported;
+            if !supported {
+                endpoint.organization = None;
+                endpoint.organization_generation = None;
+                endpoint.pending_organization = None;
+                endpoint.organization_rows.clear();
+            }
+        }
+    }
+
+    pub(super) fn organization_available(&self) -> bool {
+        self.endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+            .is_some_and(|endpoint| {
+                endpoint.organization_supported
+                    && endpoint.methods.as_ref().is_some_and(|methods| {
+                        [
+                            "organization.get",
+                            "collection.create",
+                            "collection.assign_family",
+                        ]
+                        .iter()
+                        .all(|method| methods.contains(*method))
+                    })
+            })
+    }
+
+    pub(super) fn open_new_collection(&mut self, outcome: &mut ClientShellInput) {
+        if !self.organization_available() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Unsupported,
+                "organization",
+                "Action unavailable",
+                "This server does not support collections.",
+            );
+            return;
+        }
+        self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "new collection",
+            input: TextEditor::default(),
+            target: ClientRenameTarget::NewCollection,
+        }));
+    }
+
+    pub(crate) fn set_endpoint_organization_for_generation(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        generation: u64,
+        catalog: crate::protocol::endpoint::EndpointOrganizationCatalog,
+    ) -> bool {
+        let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| &endpoint.endpoint_id == endpoint_id)
+        else {
+            return false;
+        };
+        if !endpoint.organization_supported {
+            return false;
+        }
+        if endpoint
+            .snapshot_generation
+            .is_some_and(|current| generation < current)
+        {
+            return false;
+        }
+        if endpoint.snapshot_generation != Some(generation) || endpoint.snapshot.is_none() {
+            if endpoint.pending_organization.as_ref().is_some_and(
+                |(pending_generation, pending)| {
+                    *pending_generation > generation
+                        || (*pending_generation == generation
+                            && pending.boot_id == catalog.boot_id
+                            && pending.organization.revision >= catalog.organization.revision)
+                },
+            ) {
+                return false;
+            }
+            endpoint.pending_organization = Some((generation, catalog));
+            return false;
+        }
+        if endpoint
+            .snapshot
+            .as_ref()
+            .is_none_or(|snapshot| snapshot.boot_id != catalog.boot_id)
+        {
+            return false;
+        }
+        if endpoint
+            .organization
+            .as_ref()
+            .is_some_and(|current| current.organization.revision >= catalog.organization.revision)
+        {
+            return false;
+        }
+        endpoint.organization_generation = Some(generation);
+        endpoint.organization = Some(catalog);
+        self.rebuild_organization_rows(endpoint_id);
+        true
+    }
+
+    pub(super) fn reconcile_organization(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        mut projection_changed: bool,
+    ) {
+        let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| &endpoint.endpoint_id == endpoint_id)
+        else {
+            return;
+        };
+        if let Some((generation, catalog)) =
+            endpoint
+                .pending_organization
+                .take()
+                .filter(|(generation, catalog)| {
+                    Some(*generation) == endpoint.snapshot_generation
+                        && endpoint
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.boot_id == catalog.boot_id)
+                })
+        {
+            endpoint.organization_generation = Some(generation);
+            endpoint.organization = Some(catalog);
+            projection_changed = true;
+        }
+        if endpoint.organization_generation != endpoint.snapshot_generation
+            || endpoint.organization.as_ref().is_some_and(|catalog| {
+                endpoint
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|snapshot| snapshot.boot_id != catalog.boot_id)
+            })
+        {
+            endpoint.organization = None;
+            endpoint.organization_rows.clear();
+        }
+        if projection_changed {
+            self.rebuild_organization_rows(endpoint_id);
+        }
+    }
+
+    pub(super) fn rebuild_organization_rows(&mut self, endpoint_id: &ClientEndpointId) {
+        let Some(index) = self
+            .endpoints
+            .iter()
+            .position(|endpoint| &endpoint.endpoint_id == endpoint_id)
+        else {
+            return;
+        };
+        let endpoint = &self.endpoints[index];
+        let (Some(snapshot), Some(catalog)) =
+            (endpoint.snapshot.as_deref(), endpoint.organization.as_ref())
+        else {
+            return;
+        };
+        let empty = HashSet::new();
+        let groups = self
+            .collapsed_groups_for_endpoint(endpoint_id)
+            .unwrap_or(&empty);
+        let base = sidebar::workspace_entries(snapshot, groups);
+        let assignments = base
+            .iter()
+            .map(|entry| {
+                let workspace = &snapshot.workspaces[entry.index];
+                catalog
+                    .organization
+                    .family_assignments
+                    .iter()
+                    .find(
+                        |assignment| match (&assignment.family_id, &workspace.worktree) {
+                            (crate::organization::FamilyId::Managed { key }, Some(worktree)) => {
+                                key == &worktree.key
+                            }
+                            (crate::organization::FamilyId::Standalone { workspace_id }, None) => {
+                                workspace_id == &workspace.workspace_id
+                            }
+                            _ => false,
+                        },
+                    )
+                    .map(|assignment| &assignment.collection_id)
+            })
+            .collect::<Vec<_>>();
+        let mut ordered = (0..catalog.organization.collections.len()).collect::<Vec<_>>();
+        ordered.sort_by_key(|index| catalog.organization.collections[*index].order);
+        let mut rows = Vec::new();
+        for index in ordered {
+            rows.push(CollectionRow::Collection(index));
+            let id = &catalog.organization.collections[index].id;
+            if self
+                .collapsed_collections
+                .get(endpoint_id)
+                .is_some_and(|ids| ids.contains(id))
+            {
+                continue;
+            }
+            rows.extend(
+                base.iter()
+                    .zip(&assignments)
+                    .filter(|(_, assignment)| **assignment == Some(id))
+                    .map(|(entry, _)| CollectionRow::Workspace(*entry)),
+            );
+        }
+        rows.push(CollectionRow::Uncollected);
+        rows.extend(
+            base.iter()
+                .zip(&assignments)
+                .filter(|(_, assignment)| assignment.is_none())
+                .map(|(entry, _)| CollectionRow::Workspace(*entry)),
+        );
+        self.endpoints[index].organization_rows = rows;
+    }
+
+    pub(super) fn toggle_collection(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        id: crate::organization::CollectionId,
+        outcome: &mut ClientShellInput,
+    ) {
+        let collapsed = self
+            .collapsed_collections
+            .entry(endpoint_id.clone())
+            .or_default();
+        if !collapsed.remove(&id) {
+            collapsed.insert(id);
+        }
+        self.rebuild_organization_rows(endpoint_id);
+        self.persist_chrome_preferences(outcome);
+        outcome.repaint = true;
+    }
+}

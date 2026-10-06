@@ -554,6 +554,10 @@ impl HeadlessServer {
             };
             let mut shell_projection_revision = 0;
             if matches!(mode, ClientConnectionMode::ClientShell) {
+                if !self.send_organization_catalog(client_id) {
+                    broken_clients.push(client_id);
+                    continue;
+                }
                 let location = self
                     .clients
                     .get(&client_id)

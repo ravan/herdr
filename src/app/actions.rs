@@ -692,6 +692,9 @@ impl AppState {
             self.workspaces.remove(*idx);
         }
         self.remove_unattached_terminal_ids(terminal_ids);
+        if let Err(code) = self.reconcile_organization_families() {
+            tracing::error!(code, "invalid organization state during workspace cleanup");
+        }
         if self.workspaces.is_empty() {
             self.active = None;
             self.selected = 0;
@@ -2071,6 +2074,9 @@ impl AppState {
                 .map(|ws| ws.id.clone());
             let selected_workspace_id = self.workspaces.get(self.selected).map(|ws| ws.id.clone());
             self.workspaces.remove(ws_idx);
+            if let Err(code) = self.reconcile_organization_families() {
+                tracing::error!(code, "invalid organization state during terminal exit");
+            }
             self.remove_unattached_terminal_ids(workspace_terminal_ids);
             if self.workspaces.is_empty() {
                 self.active = None;

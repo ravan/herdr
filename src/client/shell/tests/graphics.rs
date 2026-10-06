@@ -213,6 +213,7 @@ fn endpoint_notice_and_multiline_diagnostic_cover_the_actual_rows() {
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
     state.visible_endpoint_notice = Some(ClientVisibleEndpointNotice {
+        persistent: false,
         key: ClientEndpointNoticeKey {
             boot_id: "boot-1".into(),
             kind: ClientEndpointNoticeKind::Rejected,

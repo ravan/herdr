@@ -307,6 +307,10 @@ impl ClientShellState {
         title: impl Into<String>,
         body: impl Into<String>,
     ) -> bool {
+        let code = code.into();
+        let persistent = code == "organization"
+            || code.starts_with("collection.")
+            || code.starts_with("organization.");
         let key = ClientEndpointNoticeKey {
             boot_id: self
                 .snapshot
@@ -314,10 +318,10 @@ impl ClientShellState {
                 .map(|snapshot| snapshot.boot_id.clone())
                 .unwrap_or_else(|| "disconnected".to_owned()),
             kind,
-            code: code.into(),
+            code,
         };
         let body = body.into();
-        if kind == ClientEndpointNoticeKind::Rejected {
+        if persistent || kind == ClientEndpointNoticeKind::Rejected {
             if self
                 .visible_endpoint_notice
                 .as_ref()
@@ -334,11 +338,18 @@ impl ClientShellState {
             8
         };
         self.visible_endpoint_notice = Some(ClientVisibleEndpointNotice {
+            persistent,
             key,
             title: title.into(),
             body,
             deadline: std::time::Instant::now() + std::time::Duration::from_secs(duration_seconds),
         });
+        if persistent {
+            if let Some(notice) = self.visible_endpoint_notice.clone() {
+                self.organization_notices
+                    .insert(self.active_endpoint_id.clone(), notice);
+            }
+        }
         true
     }
 
@@ -397,6 +408,9 @@ impl ClientShellState {
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.saturating_add(1);
         let request_id = format!("client-shell:{request_id}");
+        if let Some(label) = super::organization::pending_label(&method_name) {
+            self.organization_pending = Some(label);
+        }
         self.pending_requests.insert(
             request_id.clone(),
             PendingEndpointRequest {
@@ -492,7 +506,7 @@ impl ClientShellState {
         request_id: &str,
         result: Result<crate::api::schema::ResponseResult, ClientShellEndpointError>,
     ) -> (bool, Vec<ClientShellAction>) {
-        let Some(pending) = self.pending_requests.remove(request_id) else {
+        let Some(pending) = self.pending_requests.get(request_id) else {
             return (false, Vec::new());
         };
         if pending.boot_id != boot_id
@@ -503,6 +517,13 @@ impl ClientShellState {
         {
             return (false, Vec::new());
         }
+        let Some(pending) = self.pending_requests.remove(request_id) else {
+            return (false, Vec::new());
+        };
+        self.organization_pending = self
+            .pending_requests
+            .values()
+            .find_map(|request| super::organization::pending_label(&request.method_name));
         if let PendingEndpointKind::PaneLinkResolve { target } = pending.kind {
             return self.complete_link_hover(target, result);
         }
@@ -552,6 +573,13 @@ impl ClientShellState {
                         "Action rejected",
                         error.message.clone(),
                     ),
+                };
+                let notice_code = if pending.method_name.starts_with("collection.")
+                    || pending.method_name.starts_with("organization.")
+                {
+                    format!("{}:{notice_code}", pending.method_name)
+                } else {
+                    notice_code
                 };
                 self.push_endpoint_notice(kind, notice_code, title, body);
             }
@@ -827,6 +855,23 @@ impl ClientShellState {
             }
         }
         let repaint = match result {
+            Ok(
+                crate::api::schema::ResponseResult::CollectionCreated { organization, .. }
+                | crate::api::schema::ResponseResult::Organization { organization },
+            ) => {
+                if let Some(generation) = self.active_snapshot_generation {
+                    let endpoint_id = self.active_endpoint_id.clone();
+                    self.set_endpoint_organization_for_generation(
+                        &endpoint_id,
+                        generation,
+                        crate::protocol::endpoint::EndpointOrganizationCatalog {
+                            boot_id: boot_id.to_owned(),
+                            organization,
+                        },
+                    );
+                }
+                true
+            }
             Ok(_) => false,
             Err(error)
                 if self.config.confirm_close

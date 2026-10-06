@@ -17,6 +17,7 @@ mod creation;
 mod custom_commands;
 mod git_refresh;
 mod ids;
+mod organization;
 mod popup;
 mod runtime;
 mod session;
@@ -374,6 +375,10 @@ impl App {
         let session_writer = Arc::new(std::sync::Mutex::new(crate::persist::SessionWriter::new(
             policy.restore_session && snapshot.is_none(),
         )));
+        let organization = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.organization.clone())
+            .unwrap_or_default();
         let (workspaces, active, selected) = if let Some(snap) = snapshot {
             let history = config
                 .experimental
@@ -522,11 +527,20 @@ impl App {
             plugin_commands_in_flight: 0,
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
+            organization,
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
         };
 
         state.terminals = restored_terminals;
+        match state.reconcile_organization_families() {
+            Ok(removed) if !removed.is_empty() => tracing::warn!(
+                ?removed,
+                "removed unavailable standalone organization references during restore"
+            ),
+            Err(code) => tracing::error!(code, "invalid organization state during restore"),
+            _ => {}
+        }
 
         for ws_idx in 0..state.workspaces.len() {
             let cwd = state.workspaces[ws_idx]
@@ -663,6 +677,7 @@ impl App {
 
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
+        app.state.organization = snapshot.organization.clone();
         app.state.terminals = terminals;
         app.terminal_runtimes = runtimes.into();
         app.state.active = snapshot
@@ -671,6 +686,9 @@ impl App {
         app.state.selected = snapshot
             .selected
             .min(app.state.workspaces.len().saturating_sub(1));
+        if let Err(code) = app.state.reconcile_organization_families() {
+            return Err(io::Error::other(code));
+        }
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {

@@ -78,6 +78,7 @@ mod endpoint_requests;
 mod lifecycle;
 mod native_graphics;
 mod notifications;
+mod organization;
 mod render;
 mod retained_surface;
 mod surface_interest;
@@ -1966,6 +1967,9 @@ impl HeadlessServer {
                 self.clients.insert(client_id, connection);
                 if self.app.state.popup_pane.is_some() && self.popup_owner_tab_id.is_none() {
                     self.popup_owner_tab_id = self.shell_tab_id_for_client(client_id);
+                }
+                if !self.send_organization_catalog(client_id) {
+                    return false;
                 }
                 if let Some(message) = projection_message {
                     self.send_to_client(client_id, message);
