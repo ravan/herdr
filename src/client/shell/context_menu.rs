@@ -9,6 +9,14 @@ impl ClientContextMenuOverlay {
             action,
         };
         let mut items = match &self.target {
+            ClientContextMenuTarget::Collection { hibernating, .. } => vec![item(
+                if *hibernating {
+                    "Hibernate collection"
+                } else {
+                    "Bring collection back"
+                },
+                Action::SetHibernating,
+            )],
             ClientContextMenuTarget::CollectionPicker { collections, .. } => collections
                 .iter()
                 .enumerate()
@@ -113,6 +121,47 @@ impl ClientContextMenuOverlay {
 }
 
 impl ClientShellState {
+    pub(super) fn open_collection_context_menu(
+        &mut self,
+        endpoint_id: ClientEndpointId,
+        collection_id: crate::organization::CollectionId,
+        x: u16,
+        y: u16,
+    ) {
+        let Some(endpoint) = self
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+        else {
+            return;
+        };
+        let (Some(snapshot), Some(catalog)) =
+            (endpoint.snapshot.as_ref(), endpoint.organization.as_ref())
+        else {
+            return;
+        };
+        let Some(collection) = catalog
+            .organization
+            .collections
+            .iter()
+            .find(|collection| collection.id == collection_id)
+        else {
+            return;
+        };
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::Collection {
+                endpoint_id,
+                boot_id: snapshot.boot_id.clone(),
+                generation: endpoint.snapshot_generation,
+                collection_id,
+                hibernating: !collection.hibernating,
+            },
+            x,
+            y,
+            highlighted: 0,
+        }));
+    }
+
     pub(super) fn open_workspace_context_menu(&mut self, workspace_id: String, x: u16, y: u16) {
         let Some(snapshot) = self.snapshot.as_deref() else {
             return;
@@ -221,6 +270,52 @@ impl ClientShellState {
             return;
         };
         match menu.target {
+            ClientContextMenuTarget::Collection {
+                endpoint_id,
+                boot_id,
+                generation,
+                collection_id,
+                hibernating,
+            } => {
+                let valid = endpoint_id == self.active_endpoint_id
+                    && self
+                        .endpoints
+                        .iter()
+                        .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+                        .is_some_and(|endpoint| {
+                            endpoint.snapshot_generation == generation
+                                && endpoint
+                                    .snapshot
+                                    .as_ref()
+                                    .is_some_and(|snapshot| snapshot.boot_id == boot_id)
+                                && endpoint.organization.as_ref().is_some_and(|catalog| {
+                                    catalog
+                                        .organization
+                                        .collections
+                                        .iter()
+                                        .any(|collection| collection.id == collection_id)
+                                })
+                        });
+                if valid {
+                    self.push_endpoint_method(
+                        crate::api::schema::Method::CollectionSetHibernating(
+                            crate::api::schema::CollectionSetHibernatingParams {
+                                collection_id,
+                                hibernating,
+                            },
+                        ),
+                        outcome,
+                    );
+                } else {
+                    outcome.repaint |= self.push_endpoint_notice(
+                        ClientEndpointNoticeKind::Rejected,
+                        "collection.stale",
+                        "Collection unavailable",
+                        "The selected collection is no longer available.",
+                    );
+                }
+            }
+
             ClientContextMenuTarget::CollectionPicker {
                 workspace,
                 family_id,

@@ -1779,6 +1779,18 @@ impl ClientShellState {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Right) => {
+                if let Some((_, endpoint, id)) = self
+                    .hits
+                    .collections
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.open_collection_context_menu(endpoint, id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
+
                 let pane_hit = self
                     .hits
                     .panes
@@ -2024,6 +2036,16 @@ impl ClientShellState {
                     self.agent_scroll = 0;
                     self.persist_chrome_preferences(outcome);
                     outcome.repaint = true;
+                    return;
+                }
+                if let Some((_, endpoint)) = self
+                    .hits
+                    .hibernate
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.toggle_hibernate(&endpoint, outcome);
                     return;
                 }
                 if let Some((_, endpoint, id)) = self

@@ -268,6 +268,7 @@ pub(super) fn render_expanded(
 
     enum Row {
         Endpoint(usize),
+        Hibernate(usize),
         Collection {
             endpoint: usize,
             index: Option<usize>,
@@ -291,6 +292,7 @@ pub(super) fn render_expanded(
                 && endpoint.organization.is_some()
             {
                 rows.extend(endpoint.organization_rows.iter().map(|row| match row {
+                    super::organization::CollectionRow::Hibernate => Row::Hibernate(endpoint_index),
                     super::organization::CollectionRow::Collection(index) => Row::Collection {
                         endpoint: endpoint_index,
                         index: Some(*index),
@@ -328,7 +330,7 @@ pub(super) fn render_expanded(
     let row_heights = rows
         .iter()
         .map(|row| match row {
-            Row::Endpoint(_) | Row::Collection { .. } => 1,
+            Row::Endpoint(_) | Row::Hibernate(_) | Row::Collection { .. } => 1,
             Row::Workspace { endpoint, entry } => {
                 let endpoint = &state.endpoints[*endpoint];
                 let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
@@ -396,7 +398,7 @@ pub(super) fn render_expanded(
                         }
                     })
             }
-            Row::Endpoint(_) | Row::Collection { .. } => false,
+            Row::Endpoint(_) | Row::Hibernate(_) | Row::Collection { .. } => false,
         });
         if let Some(selected_row) = selected_row {
             *state.workspace_scroll = super::scroll::list_scroll_start_to_reveal(
@@ -456,6 +458,35 @@ pub(super) fn render_expanded(
                     .saturating_add(1)
                     .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
             }
+            Row::Hibernate(endpoint) => {
+                if y >= body.bottom() {
+                    break;
+                }
+                let endpoint = &state.endpoints[*endpoint];
+                let rect = Rect::new(
+                    body.x.saturating_add(2),
+                    y,
+                    content_width.saturating_sub(2),
+                    1,
+                );
+                let marker = if state.expanded_hibernate.contains(&endpoint.endpoint_id) {
+                    "▾"
+                } else {
+                    "▸"
+                };
+                put_text(
+                    buffer,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    &format!(" {marker} Hibernate"),
+                    Style::default()
+                        .fg(palette.overlay0)
+                        .add_modifier(Modifier::BOLD),
+                );
+                hits.hibernate.push((rect, endpoint.endpoint_id.clone()));
+                y = y.saturating_add(1);
+            }
             Row::Collection { endpoint, index } => {
                 if y >= body.bottom() {
                     break;
@@ -485,7 +516,11 @@ pub(super) fn render_expanded(
                         rect.x,
                         rect.y,
                         rect.width,
-                        &format!(" {marker} {}", collection.name.as_str()),
+                        &format!(
+                            "{}{marker} {}",
+                            if collection.hibernating { "   " } else { " " },
+                            collection.name.as_str()
+                        ),
                         Style::default()
                             .fg(palette.text)
                             .add_modifier(Modifier::BOLD),

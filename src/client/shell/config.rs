@@ -48,7 +48,17 @@ impl ClientShellState {
             })
             .collect::<Vec<_>>();
         remote_collapsed_groups.sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
+        let mut expanded_hibernate = self
+            .expanded_hibernate
+            .iter()
+            .map(|endpoint| match endpoint {
+                ClientEndpointId::Local => None,
+                ClientEndpointId::Ssh(profile) => Some(profile.to_string()),
+            })
+            .collect::<Vec<_>>();
+        expanded_hibernate.sort();
         let preferences = preferences::ClientChromePreferences {
+            expanded_hibernate,
             collection_collapses: self
                 .collapsed_collections
                 .iter()

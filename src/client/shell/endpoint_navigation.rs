@@ -297,6 +297,7 @@ impl ClientShellState {
             };
             self.push_endpoint_method(method, outcome);
         } else {
+            self.reveal_organization_target(&endpoint_id, &target, outcome);
             outcome.actions.push(ClientShellAction::ActivateEndpoint {
                 endpoint_id,
                 target: Some(target),

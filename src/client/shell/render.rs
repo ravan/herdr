@@ -236,6 +236,7 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) active_endpoint_id: &'a ClientEndpointId,
     pub(super) collapsed_endpoints: &'a HashSet<ClientEndpointId>,
     pub(super) collapsed_groups: &'a HashSet<String>,
+    pub(super) expanded_hibernate: &'a HashSet<ClientEndpointId>,
     pub(super) collapsed_collections:
         &'a HashMap<ClientEndpointId, HashSet<crate::organization::CollectionId>>,
     pub(super) remote_collapsed_groups: &'a HashMap<ClientEndpointId, HashSet<String>>,

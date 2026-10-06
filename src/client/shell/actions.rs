@@ -378,7 +378,21 @@ impl ClientShellState {
             return false;
         }
         let method_name = crate::api::api_method_name(&method).to_owned();
-        if !self.supports_endpoint_method(&method) {
+        let hibernate_advertised = !matches!(
+            method,
+            crate::api::schema::Method::CollectionSetHibernating(_)
+        ) || self
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+            .is_some_and(|endpoint| {
+                endpoint.organization_supported
+                    && endpoint
+                        .methods
+                        .as_ref()
+                        .is_some_and(|methods| methods.contains("collection.set_hibernating"))
+            });
+        if !hibernate_advertised || !self.supports_endpoint_method(&method) {
             outcome.repaint |= self.push_endpoint_notice(
                 ClientEndpointNoticeKind::Unsupported,
                 method_name.clone(),
@@ -388,6 +402,21 @@ impl ClientShellState {
                 ),
             );
             return false;
+        }
+        let target = match &method {
+            crate::api::schema::Method::WorkspaceFocus(target) => Some(
+                ClientEndpointFocusTarget::Workspace(target.workspace_id.clone()),
+            ),
+            crate::api::schema::Method::TabFocus(target) => {
+                Some(ClientEndpointFocusTarget::Tab(target.tab_id.clone()))
+            }
+            crate::api::schema::Method::PaneFocus(target) => {
+                Some(ClientEndpointFocusTarget::Pane(target.pane_id.clone()))
+            }
+            _ => None,
+        };
+        if let Some(target) = target {
+            self.reveal_organization_target(&self.active_endpoint_id.clone(), &target, outcome);
         }
         let Some(snapshot) = self.snapshot.as_deref() else {
             return false;

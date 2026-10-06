@@ -1039,6 +1039,9 @@ impl App {
             Method::CollectionAssignFamily(params) => {
                 return self.handle_collection_assign_family(request.id, params)
             }
+            Method::CollectionSetHibernating(params) => {
+                return self.handle_collection_set_hibernating(request.id, params)
+            }
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
             Method::WorkspaceGet(target) => return self.handle_workspace_get(request.id, target),
             Method::WorkspaceCreate(params) => {

@@ -3,6 +3,20 @@ use crate::api::schema::{CollectionAssignFamilyParams, CollectionCreateParams, R
 use crate::app::App;
 
 impl App {
+    pub(super) fn handle_collection_set_hibernating(
+        &mut self,
+        id: String,
+        params: crate::api::schema::CollectionSetHibernatingParams,
+    ) -> String {
+        match self
+            .state
+            .set_collection_hibernating(params.collection_id, params.hibernating)
+        {
+            Ok(()) => self.handle_organization_get(id),
+            Err(code) => encode_error(id, code, "Cannot change collection hibernation"),
+        }
+    }
+
     pub(super) fn handle_collection_assign_family(
         &mut self,
         id: String,
@@ -125,5 +139,61 @@ mod tests {
             assert!(!app.state.session_dirty);
             app.state.assert_invariants_for_test();
         }
+    }
+}
+
+#[cfg(test)]
+mod hibernate_tests {
+    use super::*;
+    #[test]
+    fn mc_s2_json_hibernate_is_atomic_idempotent_and_required_boolean() {
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            rx,
+            crate::api::EventHub::default(),
+        );
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        let collection = app.state.create_collection("Side quests".into()).unwrap();
+        let before = app.session_snapshot();
+        let call = |app: &mut App, id: &str, hibernating: bool| -> serde_json::Value {
+            let request = serde_json::from_value(
+                serde_json::json!({"id":"park", "method":"collection.set_hibernating",
+                "params":{"collection_id":id,"hibernating":hibernating}}),
+            )
+            .expect("public Hibernate method");
+            serde_json::from_str(&app.handle_api_request(request)).unwrap()
+        };
+        let parked = call(&mut app, &collection.id.0, true);
+        assert_eq!(
+            parked["result"]["organization"]["collections"][0]["hibernating"],
+            true
+        );
+        assert_eq!(parked["result"]["organization"]["revision"], 2);
+        let confirmed = app.state.organization.clone();
+        app.state.session_dirty = false;
+        assert_eq!(call(&mut app, &collection.id.0, true), parked);
+        assert!(!app.state.session_dirty);
+        assert_eq!(
+            call(&mut app, "absent", false)["error"]["code"],
+            "collection_not_found"
+        );
+        assert_eq!(app.state.organization, confirmed);
+        app.state.organization.revision = u64::MAX;
+        assert_eq!(
+            call(&mut app, &collection.id.0, false)["error"]["code"],
+            "organization_revision_exhausted"
+        );
+        assert!(app.state.organization.collections[0].hibernating);
+        assert!(!app.state.session_dirty);
+        assert_eq!(app.session_snapshot(), before);
+        app.state.assert_invariants_for_test();
+        assert!(serde_json::from_value::<crate::api::schema::Request>(
+            serde_json::json!({"id":"bad",
+            "method":"collection.set_hibernating", "params":{"collection_id":collection.id}})
+        )
+        .is_err());
     }
 }

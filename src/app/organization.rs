@@ -56,6 +56,17 @@ impl AppState {
         Ok(collection)
     }
 
+    pub(crate) fn set_collection_hibernating(
+        &mut self,
+        id: CollectionId,
+        hibernating: bool,
+    ) -> Result<(), &'static str> {
+        if self.organization.set_hibernating(&id, hibernating)? {
+            self.mark_session_dirty();
+        }
+        Ok(())
+    }
+
     pub(crate) fn family_id(workspace: &crate::workspace::Workspace) -> FamilyId {
         match workspace.worktree_space.as_ref() {
             Some(membership) => FamilyId::Managed {
@@ -191,5 +202,52 @@ mod tests {
             Some(&collection.id)
         );
         state.assert_invariants_for_test();
+    }
+}
+
+#[cfg(test)]
+mod hibernate_tests {
+    use super::*;
+    #[test]
+    fn mc_s2_hibernate_preserves_family_focus_and_terminal_identity() {
+        let mut state = AppState::test_with_adversarial_identity_state();
+        let collection = state.create_collection("Infrastructure".into()).unwrap();
+        let family = AppState::family_id(&state.workspaces[0]);
+        state
+            .assign_family_to_collection(family.clone(), collection.id.clone())
+            .unwrap();
+        let before = serde_json::to_value(crate::persist::capture(
+            &state.workspaces,
+            &state.terminals,
+            &crate::terminal::TerminalRuntimeRegistry::new(),
+            state.active,
+            state.selected,
+        ))
+        .unwrap();
+        for (hibernating, revision) in [(true, 3), (false, 4)] {
+            state.session_dirty = false;
+            state
+                .set_collection_hibernating(collection.id.clone(), hibernating)
+                .unwrap();
+            assert_eq!(state.organization.collections[0].hibernating, hibernating);
+            assert_eq!(state.organization.revision, revision);
+            assert!(state.session_dirty);
+            assert_eq!(
+                state.organization.collection_for(&family),
+                Some(&collection.id)
+            );
+            assert_eq!(
+                serde_json::to_value(crate::persist::capture(
+                    &state.workspaces,
+                    &state.terminals,
+                    &crate::terminal::TerminalRuntimeRegistry::new(),
+                    state.active,
+                    state.selected
+                ))
+                .unwrap(),
+                before
+            );
+            state.assert_invariants_for_test();
+        }
     }
 }

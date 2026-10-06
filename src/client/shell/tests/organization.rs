@@ -647,3 +647,333 @@ fn mc_s1_confirmed_create_repaints_a_silent_client_and_applies_the_confirmed_cat
     let text = frame_rows(&frame).join("\n");
     assert!(text.contains("Agent workshop") && !text.contains("creating collection"));
 }
+
+fn hibernate_client(config: ClientShellConfig) -> ClientShellState {
+    let mut state = ClientShellState::new(config);
+    let mut projected = snapshot();
+    projected.workspaces[0].worktree = Some(ClientShellWorktree {
+        key: "repo-key".into(),
+        label: "repo".into(),
+        is_linked_worktree: false,
+    });
+    let mut child = projected.workspaces[0].clone();
+    child.workspace_id = "ws_2".into();
+    child.label = "parked-child".into();
+    child.focused = false;
+    child.worktree.as_mut().unwrap().is_linked_worktree = true;
+    projected.workspaces.push(child);
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(projected));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "collection.create".into(),
+        "collection.assign_family".into(),
+        "collection.set_hibernating".into(),
+        "pane.focus".into(),
+    ]));
+    state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    let catalog = serde_json::from_value(serde_json::json!({"boot_id":"boot-1", "organization":{
+        "revision":3,"collections":[
+            {"id":"collection_1","name":"Infrastructure","order":0,"hibernating":true},
+            {"id":"collection_2","name":"Daily","order":1,"hibernating":false}],
+        "family_assignments":[{"family_id":{"kind":"managed","key":"repo-key"},"collection_id":"collection_1"}]
+    }})).unwrap();
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    state
+}
+
+#[test]
+fn mc_s2_hibernate_is_collapsed_and_expands_the_existing_family_without_terminal_actions() {
+    let mut state = hibernate_client(ClientShellConfig::from_config(&Config::default()));
+    let frame = state.compose(106, 40).unwrap();
+    let rows = frame_rows(&frame);
+    assert!(rows.iter().any(|row| row.contains("▸ Hibernate")));
+    assert!(!rows.iter().any(|row| row.contains("Infrastructure")));
+    assert!(state.hits.workspaces.is_empty());
+    assert_eq!(
+        state.snapshot.as_ref().unwrap().focused_pane_id.as_deref(),
+        Some("pane_1")
+    );
+    let y = rows
+        .iter()
+        .position(|row| row.contains("Hibernate"))
+        .unwrap() as u16;
+    let rect = Rect::new(state.hits.workspace_body.x + 1, y, 1, 1);
+    let action = click(&mut state, rect);
+    assert!(action.actions.is_empty() && action.requests.is_empty());
+    let frame = state.compose(106, 40).unwrap();
+    let rows = frame_rows(&frame);
+    let daily = rows.iter().position(|row| row.contains("Daily")).unwrap();
+    let group = rows
+        .iter()
+        .position(|row| row.contains("▾ Hibernate"))
+        .unwrap();
+    let parked = rows
+        .iter()
+        .position(|row| row.contains("Infrastructure"))
+        .unwrap();
+    assert!(daily < group && group < parked);
+    assert_eq!(state.hits.workspaces.len(), 2);
+    assert_eq!(
+        state
+            .hits
+            .workspaces
+            .iter()
+            .map(|hit| hit.workspace_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ws_1", "ws_2"]
+    );
+    assert!(state.handle_input_bytes(b"typing while parked").requests.iter().any(|request| matches!(request, ClientMessage::ClientShellPaneInput { pane_id, .. } if pane_id == "pane_1")));
+}
+
+#[test]
+fn mc_s2_hibernate_expansion_is_client_local_and_survives_preference_reload() {
+    let path =
+        std::env::temp_dir().join(format!("herdr-mc-s2-expansion-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.preferences_path = Some(path.clone());
+    let mut first = hibernate_client(config);
+    let mut second = hibernate_client(ClientShellConfig::from_config(&Config::default()));
+    first.compose(106, 40).unwrap();
+    let rect = first.hits.hibernate[0].0;
+    let expand = click(&mut first, rect);
+    assert!(expand.actions.is_empty() && expand.requests.is_empty());
+    assert!(frame_rows(&first.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Infrastructure"));
+    assert!(!frame_rows(&second.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Infrastructure"));
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.preferences = super::super::preferences::load(&path).unwrap();
+    let mut restored = hibernate_client(config);
+    assert!(frame_rows(&restored.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Infrastructure"));
+    click(&mut first, rect);
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.preferences = super::super::preferences::load(&path).unwrap();
+    let mut collapsed = hibernate_client(config);
+    assert!(!frame_rows(&collapsed.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Infrastructure"));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn mc_s2_collection_menu_waits_for_confirmation_and_uses_captured_identity() {
+    let mut state = hibernate_client(ClientShellConfig::from_config(&Config::default()));
+    state.compose(106, 40).unwrap();
+    let group = state.hits.hibernate[0].0;
+    click(&mut state, group);
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .collections
+        .iter()
+        .find(|(_, _, id)| id.0 == "collection_1")
+        .unwrap()
+        .0;
+    let open = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(open.actions.is_empty() && open.requests.is_empty());
+    assert!(frame_rows(&state.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Bring collection back"));
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("Hibernate uses JSON command lane");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({
+            "method":"collection.set_hibernating", "params":{"collection_id":"collection_1","hibernating":false}
+        })
+    );
+    assert!(frame_rows(&state.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("updating Hibernate"));
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    assert!(
+        catalog.organization.collections[0].hibernating,
+        "pending command does not unpark optimistically"
+    );
+    catalog.organization.revision = 4;
+    catalog.organization.collections[0].hibernating = false;
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .collections
+        .iter()
+        .find(|(_, _, id)| id.0 == "collection_1")
+        .unwrap()
+        .0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(frame_rows(&state.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Hibernate collection"));
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("park request");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap()["params"]["hibernating"],
+        true
+    );
+}
+
+#[test]
+fn mc_s2_explicit_pane_jump_reveals_parked_collection_and_family_without_unparking() {
+    let mut state = hibernate_client(ClientShellConfig::from_config(&Config::default()));
+    state.compose(106, 40).unwrap();
+    let rect = state.hits.hibernate[0].0;
+    click(&mut state, rect);
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .collections
+        .iter()
+        .find(|(_, _, id)| id.0 == "collection_1")
+        .unwrap()
+        .0;
+    click(&mut state, rect);
+    state.compose(106, 40).unwrap();
+    let rect = state.hits.hibernate[0].0;
+    click(&mut state, rect);
+    let mut action = ClientShellInput::default();
+    assert!(state.focus_or_activate(
+        ClientEndpointId::Local,
+        ClientEndpointFocusTarget::Pane("pane_1".into()),
+        &mut action
+    ));
+    let frame = state.compose(106, 40).unwrap();
+    assert!(frame_rows(&frame).join("\n").contains("▾ Hibernate"));
+    assert_eq!(state.hits.workspaces.len(), 2);
+    assert!(
+        state.endpoints[0]
+            .organization
+            .as_ref()
+            .unwrap()
+            .organization
+            .collections[0]
+            .hibernating
+    );
+    let [ClientShellAction::Endpoint { request, .. }] = &action.actions[..] else {
+        panic!("only focus request");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"pane.focus","params":{"pane_id":"pane_1"}})
+    );
+}
+
+#[test]
+fn mc_s2_hibernate_requires_its_advertised_method_and_keeps_mc_s1_actions_available() {
+    for methods in [
+        None,
+        Some(vec![
+            "organization.get".into(),
+            "collection.create".into(),
+            "collection.assign_family".into(),
+        ]),
+    ] {
+        let mut state = hibernate_client(ClientShellConfig::from_config(&Config::default()));
+        state.set_endpoint_methods(methods.clone());
+        state.compose(106, 40).unwrap();
+        let group = state.hits.hibernate[0].0;
+        click(&mut state, group);
+        state.compose(106, 40).unwrap();
+        let rect = state
+            .hits
+            .collections
+            .iter()
+            .find(|(_, _, id)| id.0 == "collection_1")
+            .unwrap()
+            .0;
+        state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        })]);
+        let unavailable = state.handle_input_bytes(b"\r");
+        assert!(unavailable.actions.is_empty() && unavailable.requests.is_empty());
+        assert!(frame_rows(&state.compose(106, 40).unwrap())
+            .join("\n")
+            .contains("Action unavailable"));
+        assert!(state.handle_input_bytes(b"still typing").requests.iter().any(|request|
+            matches!(request, ClientMessage::ClientShellPaneInput { pane_id, .. } if pane_id == "pane_1")));
+        assert!(frame_rows(&state.compose(106, 40).unwrap())
+            .join("\n")
+            .contains("Action unavailable"));
+        if methods.is_some() {
+            let mut outcome = ClientShellInput::default();
+            state.open_new_collection(&mut outcome);
+            assert!(matches!(state.overlay, Some(ClientShellOverlay::Rename(_))));
+            state.handle_input_bytes(b"Another");
+            let submit = state.handle_input_bytes(b"\r");
+            assert!(submit.actions.iter().any(|action| matches!(action,
+                ClientShellAction::Endpoint { request, .. } if matches!(request.method, crate::api::schema::Method::CollectionCreate(_)))));
+        }
+    }
+}
+
+#[test]
+fn mc_s2_multi_endpoint_hibernate_rows_and_hits_stay_inside_the_sidebar() {
+    let mut state = hibernate_client(ClientShellConfig::from_config(&Config::default()));
+    let remote = crate::client::endpoint::SavedSshEndpoint {
+        id: crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        label: "Legacy".into(),
+        target: "dev@legacy.example".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let remote_id = ClientEndpointId::Ssh(remote.id.clone());
+    state.set_endpoint_catalog(&[remote]);
+    let mut projected = snapshot();
+    projected.boot_id = "remote-boot".into();
+    state.set_endpoint_status(&remote_id, ClientEndpointStatus::Online);
+    state.cache_endpoint_snapshot_for_generation(&remote_id, 1, Box::new(projected));
+    let text = frame_rows(&state.compose(106, 40).unwrap()).join("\n");
+    assert!(
+        text.contains("▸ Hibernate") && text.contains("Legacy") && !text.contains("Infrastructure")
+    );
+    let rect = state.hits.hibernate[0].0;
+    click(&mut state, rect);
+    let text = frame_rows(&state.compose(106, 40).unwrap()).join("\n");
+    assert!(text.contains("Infrastructure"));
+    assert_eq!(
+        state
+            .hits
+            .workspaces
+            .iter()
+            .filter(|hit| hit.endpoint_id == ClientEndpointId::Local)
+            .count(),
+        2
+    );
+    click(&mut state, rect);
+    for height in 5..=25 {
+        state.compose(106, height).unwrap();
+        assert!(
+            state
+                .hits
+                .hibernate
+                .iter()
+                .all(|(rect, _)| rect.y >= state.hits.workspace_body.y
+                    && rect.bottom() <= state.hits.workspace_body.bottom()),
+            "Hibernate hits must be clipped at height {height}"
+        );
+    }
+}

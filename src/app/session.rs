@@ -235,3 +235,58 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(all(test, unix))]
+mod hibernate_tests {
+    use super::*;
+
+    #[test]
+    fn mc_s2_parked_empty_collection_survives_save_load_and_handoff() {
+        let root = std::env::temp_dir().join(format!("herdr-mc-s2-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("session.json");
+        let config = crate::config::Config::default();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy {
+                persist_session: true,
+                ..crate::app::AppPolicy::TEST
+            },
+            None,
+            rx,
+            crate::api::EventHub::default(),
+        );
+        app.session_writer = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::persist::SessionWriter::at_path(path.clone(), false),
+        ));
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        let id = app
+            .state
+            .create_collection("Side quests".into())
+            .unwrap()
+            .id;
+        app.state.set_collection_hibernating(id, true).unwrap();
+        let populated = app.capture_session_snapshot();
+        assert!(populated.organization.collections[0].hibernating);
+        app.state.close_workspaces(vec![0]);
+        app.save_session_now();
+        let saved: crate::persist::SessionSnapshot =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert!(saved.workspaces.is_empty());
+        assert!(saved.organization.collections[0].hibernating);
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let restored = App::new_from_handoff(
+            &config,
+            None,
+            rx,
+            crate::api::EventHub::default(),
+            &saved,
+            &mut std::collections::HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(restored.state.organization, app.state.organization);
+        restored.state.assert_invariants_for_test();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

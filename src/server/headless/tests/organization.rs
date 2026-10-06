@@ -81,3 +81,84 @@ async fn mc_s1_endpoint_catalog_reaches_two_clients_and_new_attachments() {
     );
     shutdown_test_runtimes(&mut server);
 }
+
+fn catalog_at_revision(
+    receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
+    revision: u64,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let bytes = receiver
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .expect("expected catalog revision reaches the attached client");
+        if let ServerMessage::EndpointControl { kind, data } = read_server_message(bytes) {
+            if kind == "endpoint.organization.v1" {
+                let catalog: serde_json::Value = serde_json::from_str(&data).unwrap();
+                if catalog["organization"]["revision"].as_u64().unwrap() >= revision {
+                    return catalog;
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn mc_s2_hibernate_revision_reaches_clients_and_new_attachment_without_terminal_changes() {
+    let mut server = test_headless_server();
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("parked")];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    let created: serde_json::Value = serde_json::from_str(&server.app.handle_api_request(
+        serde_json::from_value(serde_json::json!({"id":"create", "method":"collection.create", "params":{"name":"Side quests"}})).unwrap())).unwrap();
+    let id = created["result"]["collection"]["id"].clone();
+    let (first, _first_render) = connect_test_shell(&mut server, 81, 80, 24);
+    let (second, _second_render) = connect_test_shell(&mut server, 82, 80, 24);
+    server.render_and_stream();
+    let before = server.app.session_snapshot();
+    first.try_iter().for_each(drop);
+    second.try_iter().for_each(drop);
+    server.handle_server_event(ServerEvent::ClientShellEndpointRequest {
+        client_id: 81,
+        boot_id: server.client_shell_boot_id.clone(),
+        request: Box::new(
+            serde_json::from_value(
+                serde_json::json!({"id":"hibernate", "method":"collection.set_hibernating",
+                "params":{"collection_id":id, "hibernating":true}}),
+            )
+            .unwrap(),
+        ),
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = server.server_event_rx.recv().await.unwrap();
+            let complete = matches!(&event, ServerEvent::ClientShellEndpointResponseChunkReady {
+                client_id:81, request_id, final_chunk:true, data, ..
+            } if request_id == "hibernate" && {
+                let response: serde_json::Value = serde_json::from_slice(data).unwrap();
+                assert_eq!(response["result"]["organization"]["collections"][0]["hibernating"], true);
+                true
+            });
+            server.handle_server_event(event);
+            if complete { break; }
+        }
+    }).await.unwrap();
+    server.render_and_stream();
+    let confirmed = catalog_at_revision(&first, 2);
+    assert_eq!(confirmed["organization"]["revision"], 2);
+    assert_eq!(
+        confirmed["organization"]["collections"][0]["hibernating"],
+        true
+    );
+    assert_eq!(catalog_at_revision(&second, 2), confirmed);
+    let (third, _third_render) = connect_test_shell(&mut server, 83, 80, 24);
+    assert_eq!(catalog_at_revision(&third, 2), confirmed);
+    assert_eq!(server.app.session_snapshot(), before);
+    server.render_and_stream();
+    for receiver in [&first, &second, &third] {
+        assert!(receiver
+            .try_iter()
+            .all(|bytes| !matches!(read_server_message(bytes),
+            ServerMessage::EndpointControl { kind, .. } if kind == "endpoint.organization.v1")));
+    }
+    shutdown_test_runtimes(&mut server);
+}

@@ -324,6 +324,34 @@ mod tests {
     }
 
     #[test]
+    fn mc_s2_flag_only_edits_are_recoverable_across_writer_restart() {
+        let mut writer = writer(false);
+        let mut state = crate::app::AppState::test_new();
+        let id = state.create_collection("Side quests".into()).unwrap().id;
+        let mut snapshot: SessionSnapshot =
+            serde_json::from_str(r#"{"version":3,"workspaces":[],"active":null,"selected":0}"#)
+                .unwrap();
+        for parked in [false, true, false] {
+            state
+                .set_collection_hibernating(id.clone(), parked)
+                .unwrap();
+            snapshot.organization = state.organization.clone();
+            writer = SessionWriter::at_path(writer.path.clone(), false);
+            writer.save(&snapshot, None);
+        }
+        let flags = snapshots(&writer)
+            .into_iter()
+            .map(|(_, path)| {
+                let snapshot: SessionSnapshot =
+                    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+                snapshot.organization.collections[0].hibernating
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(flags, vec![false, true, false]);
+        std::fs::remove_dir_all(writer.path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn mc_s1_recovery_keeps_organization_only_edits_across_writer_restarts() {
         let mut writer = writer(false);
         let mut state = crate::app::AppState::test_new();

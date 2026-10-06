@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn pending_label(method: &str) -> Option<&'static str> {
     match method {
+        "collection.set_hibernating" => Some(" updating Hibernate…"),
         "collection.create" => Some(" creating collection…"),
         "collection.assign_family" => Some(" moving family…"),
         _ => None,
@@ -10,6 +11,7 @@ pub(super) fn pending_label(method: &str) -> Option<&'static str> {
 
 #[derive(Clone, Debug)]
 pub(super) enum CollectionRow {
+    Hibernate,
     Collection(usize),
     Uncollected,
     Workspace(WorkspaceEntry),
@@ -308,7 +310,7 @@ impl ClientShellState {
         let mut ordered = (0..catalog.organization.collections.len()).collect::<Vec<_>>();
         ordered.sort_by_key(|index| catalog.organization.collections[*index].order);
         let mut rows = Vec::new();
-        for index in ordered {
+        let append_collection = |rows: &mut Vec<CollectionRow>, index: usize| {
             rows.push(CollectionRow::Collection(index));
             let id = &catalog.organization.collections[index].id;
             if self
@@ -316,7 +318,7 @@ impl ClientShellState {
                 .get(endpoint_id)
                 .is_some_and(|ids| ids.contains(id))
             {
-                continue;
+                return;
             }
             rows.extend(
                 base.iter()
@@ -324,6 +326,11 @@ impl ClientShellState {
                     .filter(|(_, assignment)| **assignment == Some(id))
                     .map(|(entry, _)| CollectionRow::Workspace(*entry)),
             );
+        };
+        for &index in &ordered {
+            if !catalog.organization.collections[index].hibernating {
+                append_collection(&mut rows, index);
+            }
         }
         rows.push(CollectionRow::Uncollected);
         rows.extend(
@@ -332,7 +339,116 @@ impl ClientShellState {
                 .filter(|(_, assignment)| assignment.is_none())
                 .map(|(entry, _)| CollectionRow::Workspace(*entry)),
         );
+        rows.push(CollectionRow::Hibernate);
+        if self.expanded_hibernate.contains(endpoint_id) {
+            for index in ordered {
+                if catalog.organization.collections[index].hibernating {
+                    append_collection(&mut rows, index);
+                }
+            }
+        }
         self.endpoints[index].organization_rows = rows;
+    }
+
+    /// Explicit navigation reveals parked locations; catalog/focus updates never do this.
+    pub(super) fn reveal_organization_target(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        target: &ClientEndpointFocusTarget,
+        outcome: &mut ClientShellInput,
+    ) {
+        let location = self
+            .endpoints
+            .iter()
+            .find(|endpoint| &endpoint.endpoint_id == endpoint_id)
+            .and_then(|endpoint| {
+                let snapshot = endpoint.snapshot.as_ref()?;
+                let workspace_id = match target {
+                    ClientEndpointFocusTarget::Workspace(id) => id.as_str(),
+                    ClientEndpointFocusTarget::Tab(id) => snapshot
+                        .tabs
+                        .iter()
+                        .find(|tab| &tab.tab_id == id)?
+                        .workspace_id
+                        .as_str(),
+                    ClientEndpointFocusTarget::Pane(id) => snapshot
+                        .panes
+                        .iter()
+                        .find(|pane| &pane.pane_id == id)?
+                        .workspace_id
+                        .as_str(),
+                    #[cfg(windows)]
+                    ClientEndpointFocusTarget::Notification { pane_id, .. } => snapshot
+                        .panes
+                        .iter()
+                        .find(|pane| &pane.pane_id == pane_id)?
+                        .workspace_id
+                        .as_str(),
+                };
+                let workspace = snapshot
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.workspace_id == workspace_id)?;
+                let catalog = &endpoint.organization.as_ref()?.organization;
+                let family = match &workspace.worktree {
+                    Some(worktree) => crate::organization::FamilyId::Managed {
+                        key: worktree.key.clone(),
+                    },
+                    None => crate::organization::FamilyId::Standalone {
+                        workspace_id: workspace_id.to_owned(),
+                    },
+                };
+                let id = catalog.collection_for(&family)?;
+                let collection = catalog
+                    .collections
+                    .iter()
+                    .find(|collection| &collection.id == id)?;
+                Some((
+                    collection.id.clone(),
+                    collection.hibernating,
+                    workspace
+                        .worktree
+                        .as_ref()
+                        .map(|worktree| worktree.key.clone()),
+                ))
+            });
+        let Some((id, hibernating, family_key)) = location else {
+            return;
+        };
+        let mut changed = hibernating && self.expanded_hibernate.insert(endpoint_id.clone());
+        if let Some(ids) = self.collapsed_collections.get_mut(endpoint_id) {
+            changed |= ids.remove(&id);
+        }
+        if let Some(key) = family_key {
+            let groups = if endpoint_id.is_local() {
+                Some(&mut self.collapsed_groups)
+            } else {
+                self.remote_collapsed_groups.get_mut(endpoint_id)
+            };
+            if let Some(groups) = groups {
+                changed |= groups.remove(&key);
+            }
+        }
+        if changed {
+            self.rebuild_organization_rows(endpoint_id);
+            self.reveal_focused_workspace = true;
+            self.reveal_navigation_workspace = true;
+            self.persist_chrome_preferences(outcome);
+            outcome.repaint = true;
+        }
+    }
+
+    pub(super) fn toggle_hibernate(
+        &mut self,
+        endpoint: &ClientEndpointId,
+        outcome: &mut ClientShellInput,
+    ) {
+        if !self.expanded_hibernate.remove(endpoint) {
+            self.expanded_hibernate.insert(endpoint.clone());
+        }
+        self.rebuild_organization_rows(endpoint);
+        self.persist_chrome_preferences(outcome);
+        outcome.repaint = true;
     }
 
     pub(super) fn toggle_collection(

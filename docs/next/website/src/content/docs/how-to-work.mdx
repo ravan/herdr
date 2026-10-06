@@ -101,3 +101,11 @@ herdr --remote workbox
 Use `herdr` for local work. Use `ssh you@server` then `herdr` when you want Herdr to behave like tmux on that remote shell or when you are using a phone SSH client. Use `herdr --remote <host>` for a local UI attached to one remote session, including local clipboard image paste. To keep Local and several SSH machines in one window, save them with `herdr machine add <host> --label <label>`; see [Connecting machines](/docs/connecting-machines/).
 
 For remote bootstrap details, named remote sessions, custom binaries, and direct terminal attach, see [Persistence and remote access](/docs/persistence-remote/).
+
+## Collections and Hibernate
+
+Use **new collection** in the menu to create a collection. Right-click a workspace and choose **Move family to collection...** to organize it with its managed worktrees.
+
+To park a collection, right-click its header and choose **Hibernate collection**. The collection moves under **Hibernate**, which starts collapsed on a new client. Click Hibernate to expand it, then right-click a parked collection and choose **Bring collection back** to return it to the ordinary list.
+
+Parking preserves the current terminal and input target. Agents keep running and their notifications still arrive. An explicit jump to a parked agent reveals its location without bringing the collection back. The parked flag survives server restart; expansion choices belong to each client. Servers that do not advertise Hibernate keep their existing collection and terminal controls.

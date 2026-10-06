@@ -72,6 +72,25 @@ pub(super) fn render_collection_rows(
         }
         let rect = Rect::new(body.x, y, width, height);
         match row {
+            CollectionRow::Hibernate => {
+                let marker = if state.expanded_hibernate.contains(state.active_endpoint_id) {
+                    "▾"
+                } else {
+                    "▸"
+                };
+                put_text(
+                    buffer,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    &format!(" {marker} Hibernate"),
+                    Style::default()
+                        .fg(palette.overlay0)
+                        .add_modifier(Modifier::BOLD),
+                );
+                hits.hibernate
+                    .push((rect, state.active_endpoint_id.clone()));
+            }
             CollectionRow::Collection(index) => {
                 if let Some(collection) = catalog.organization.collections.get(*index) {
                     let marker = if state
@@ -88,7 +107,11 @@ pub(super) fn render_collection_rows(
                         rect.x,
                         rect.y,
                         rect.width,
-                        &format!(" {marker} {}", collection.name.as_str()),
+                        &format!(
+                            "{}{marker} {}",
+                            if collection.hibernating { "   " } else { " " },
+                            collection.name.as_str()
+                        ),
                         Style::default()
                             .fg(palette.text)
                             .add_modifier(Modifier::BOLD),

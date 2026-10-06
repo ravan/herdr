@@ -83,6 +83,8 @@ pub enum Method {
     CollectionCreate(CollectionCreateParams),
     #[serde(rename = "collection.assign_family")]
     CollectionAssignFamily(CollectionAssignFamilyParams),
+    #[serde(rename = "collection.set_hibernating")]
+    CollectionSetHibernating(CollectionSetHibernatingParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
     #[serde(rename = "workspace.list")]

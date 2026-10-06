@@ -580,6 +580,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::ClientShellSurfaceSet(_) => "client_shell.surface.set",
         Method::SessionSnapshot(_) => "session.snapshot",
         Method::OrganizationGet(_) => "organization.get",
+        Method::CollectionSetHibernating(_) => "collection.set_hibernating",
         Method::CollectionCreate(_) => "collection.create",
         Method::CollectionAssignFamily(_) => "collection.assign_family",
         Method::WorkspaceCreate(_) => "workspace.create",

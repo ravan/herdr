@@ -83,6 +83,7 @@ pub(super) enum ClientMobileTarget {
 
 #[derive(Default)]
 pub(super) struct ShellHitMap {
+    pub(super) hibernate: Vec<(Rect, ClientEndpointId)>,
     pub(super) collections: Vec<(Rect, ClientEndpointId, crate::organization::CollectionId)>,
     pub(super) machines: Vec<MachineHit>,
     pub(super) workspaces: Vec<WorkspaceHit>,
@@ -512,6 +513,7 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
+    SetHibernating,
     MoveFamilyToCollection,
     AssignCollection(usize),
     Rename,
@@ -533,6 +535,13 @@ pub(super) enum ClientContextMenuAction {
 
 #[derive(Debug)]
 pub(super) enum ClientContextMenuTarget {
+    Collection {
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+        collection_id: crate::organization::CollectionId,
+        hibernating: bool,
+    },
     CollectionPicker {
         workspace: WorkspaceNavigationTarget,
         family_id: crate::organization::FamilyId,
@@ -891,6 +900,7 @@ pub(crate) struct ClientShellState {
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
     pub(super) collapsed_groups: HashSet<String>,
+    pub(super) expanded_hibernate: HashSet<ClientEndpointId>,
     pub(super) collapsed_collections:
         HashMap<ClientEndpointId, HashSet<crate::organization::CollectionId>>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
@@ -1060,6 +1070,16 @@ impl ClientShellState {
             workspace_press: None,
             tab_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
+            expanded_hibernate: preferences
+                .expanded_hibernate
+                .into_iter()
+                .filter_map(|profile| match profile {
+                    None => Some(ClientEndpointId::Local),
+                    Some(profile) => crate::client::endpoint::ProfileId::parse(profile)
+                        .ok()
+                        .map(ClientEndpointId::Ssh),
+                })
+                .collect(),
             collapsed_collections: preferences
                 .collection_collapses
                 .into_iter()

@@ -170,6 +170,25 @@ impl OrganizationState {
         Ok(collection)
     }
 
+    pub fn set_hibernating(
+        &mut self,
+        id: &CollectionId,
+        hibernating: bool,
+    ) -> Result<bool, &'static str> {
+        let index = self
+            .collections
+            .iter()
+            .position(|collection| &collection.id == id)
+            .ok_or("collection_not_found")?;
+        if self.collections[index].hibernating == hibernating {
+            return Ok(false);
+        }
+        let revision = self.next_revision(self.standalone_count())?;
+        self.collections[index].hibernating = hibernating;
+        self.revision = revision;
+        Ok(true)
+    }
+
     fn standalone_count(&self) -> usize {
         self.family_assignments
             .iter()

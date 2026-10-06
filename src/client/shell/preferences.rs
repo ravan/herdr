@@ -22,6 +22,9 @@ pub(super) struct ClientRemoteCollapsedGroups {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(super) struct ClientChromePreferences {
+    /// Endpoint profiles where this client explicitly expanded Hibernate; absent means collapsed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) expanded_hibernate: Vec<Option<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) collection_collapses: Vec<ClientCollectionCollapse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

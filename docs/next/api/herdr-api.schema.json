@@ -1744,6 +1744,21 @@
           ],
           "type": "object"
         },
+        "CollectionSetHibernatingParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "hibernating": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "collection_id",
+            "hibernating"
+          ],
+          "type": "object"
+        },
         "CommandInvokeParams": {
           "properties": {
             "command_id": {
@@ -5023,6 +5038,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/CollectionAssignFamilyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.set_hibernating",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionSetHibernatingParams"
             }
           },
           "required": [

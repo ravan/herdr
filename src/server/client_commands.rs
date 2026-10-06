@@ -16,6 +16,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "client_shell.surface.set",
     "collection.assign_family",
     "collection.create",
+    "collection.set_hibernating",
     "command.invoke",
     "integration.install",
     "integration.list",
@@ -292,6 +293,10 @@ mod tests {
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
         // Freeze additive methods separately without rewriting the published fixture.
+        assert_eq!(
+            actual.remove("collection.set_hibernating").as_deref(),
+            Some("0686bd9c176686f00d84fded58db038a82b5301c69656f022cd3acaec61454eb")
+        );
         assert_eq!(
             actual.remove("collection.assign_family").as_deref(),
             Some("98aee73c135e0f39a4369cd057bb5a11798a70e72a1a2730dc5355a394c475f0")
