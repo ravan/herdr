@@ -28,6 +28,7 @@ pub(crate) struct ClientShellEndpoint {
     pub(crate) pending_organization:
         Option<(u64, crate::protocol::endpoint::EndpointOrganizationCatalog)>,
     pub(super) mission_labels: HashMap<String, String>,
+    pub(super) pane_missions: HashMap<String, super::organization::PaneMissionMembership>,
     pub(super) organization_rows: Vec<super::organization::CollectionRow>,
 }
 
@@ -102,6 +103,9 @@ impl ClientShellState {
                     .and_then(|endpoint| endpoint.organization_generation),
                 pending_organization: previous
                     .and_then(|endpoint| endpoint.pending_organization.clone()),
+                pane_missions: previous
+                    .map(|e| e.pane_missions.clone())
+                    .unwrap_or_default(),
                 mission_labels: previous
                     .map(|e| e.mission_labels.clone())
                     .unwrap_or_default(),
@@ -602,21 +606,32 @@ impl ClientShellState {
             .as_deref()
             .is_some_and(|previous| previous.boot_id != snapshot.boot_id);
         // Agent/status-only replacements retain the collection row cache.
-        let organization_projection_changed = boot_changed
-            || self.endpoints[index].snapshot_generation != generation
-            || self.endpoints[index]
-                .snapshot
-                .as_ref()
-                .is_none_or(|previous| {
-                    previous.workspaces.len() != snapshot.workspaces.len()
-                        || previous.workspaces.iter().zip(&snapshot.workspaces).any(
-                            |(previous, next)| {
-                                previous.workspace_id != next.workspace_id
-                                    || previous.worktree != next.worktree
-                                    || previous.focused != next.focused
-                            },
-                        )
-                });
+        let organization_projection_changed =
+            boot_changed
+                || self.endpoints[index].snapshot_generation != generation
+                || self.endpoints[index]
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|previous| {
+                        previous.tabs.len() != snapshot.tabs.len()
+                            || previous.tabs.iter().zip(&snapshot.tabs).any(|(a, b)| {
+                                a.tab_id != b.tab_id || a.workspace_id != b.workspace_id
+                            })
+                            || previous.panes.len() != snapshot.panes.len()
+                            || previous.panes.iter().zip(&snapshot.panes).any(|(a, b)| {
+                                a.pane_id != b.pane_id
+                                    || a.tab_id != b.tab_id
+                                    || a.workspace_id != b.workspace_id
+                            })
+                            || previous.workspaces.len() != snapshot.workspaces.len()
+                            || previous.workspaces.iter().zip(&snapshot.workspaces).any(
+                                |(previous, next)| {
+                                    previous.workspace_id != next.workspace_id
+                                        || previous.worktree != next.worktree
+                                        || previous.focused != next.focused
+                                },
+                            )
+                    });
         if boot_changed {
             self.retire_endpoint_notifications(endpoint_id);
         }
@@ -794,6 +809,7 @@ pub(super) fn local_endpoint() -> ClientShellEndpoint {
         organization_generation: None,
         pending_organization: None,
         mission_labels: HashMap::new(),
+        pane_missions: HashMap::new(),
         organization_rows: Vec::new(),
     }
 }

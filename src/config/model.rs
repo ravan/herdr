@@ -99,6 +99,7 @@ pub enum AgentPanelSortConfig {
     #[serde(alias = "workspaces")]
     Spaces,
     Priority,
+    Missions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

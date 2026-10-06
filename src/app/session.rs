@@ -357,6 +357,73 @@ mod mission_tests {
             runtime.shutdown();
         }
     }
+    #[tokio::test]
+    async fn mc_s4_capture_restore_keeps_pane_overrides_after_final_public_maps() {
+        let config = crate::config::Config::default();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy::TEST,
+            None,
+            rx,
+            crate::api::EventHub::default(),
+        );
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        let workspace = app.state.workspaces[0].id.clone();
+        let runtime_pane = app.state.workspaces[0].tabs[2].layout.pane_ids()[1];
+        let id = app.public_pane_id(0, runtime_pane).unwrap();
+        let mission = app
+            .state
+            .create_mission("Tako platform".into(), Some("Ship".into()))
+            .unwrap();
+        app.state
+            .assign_pane_mission(id.clone(), mission.id.clone())
+            .unwrap();
+        let snapshot = app.capture_session_snapshot();
+        let mut raw = serde_json::to_value(&snapshot).unwrap();
+        raw["organization"]["pane_mission_assignments"]
+            .as_array_mut()
+            .unwrap()
+            .push(
+                serde_json::json!({"mission_id":mission.id,"pane_id":format!("{workspace}:p999")}),
+            );
+        let parsed: crate::persist::SessionSnapshot = serde_json::from_value(raw).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let (workspaces, terminals, runtimes) = crate::persist::restore(
+            &parsed,
+            None,
+            24,
+            80,
+            config.advanced.scrollback_limit_bytes,
+            &config.terminal.default_shell,
+            config.terminal.shell_mode,
+            false,
+            tx,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            std::sync::Arc::new(crate::render_signal::RenderSignal::default()),
+        );
+        app.state.workspaces = workspaces;
+        app.state.terminals = terminals;
+        app.terminal_runtimes = runtimes.into();
+        app.state.organization = parsed.organization;
+        assert_ne!(
+            app.state.workspaces[0].tabs[2].layout.pane_ids()[1],
+            runtime_pane,
+            "cold restore allocates new runtime pane IDs"
+        );
+        assert_eq!(
+            app.state
+                .organization
+                .retain_live_pane_missions(&app.state.live_mission_panes())
+                .unwrap(),
+            vec![format!("{workspace}:p999")]
+        );
+        assert_eq!(app.state.organization.pane_override(&id), Some(&mission.id));
+        app.state.assert_invariants_for_test();
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn mc_s3_empty_mission_save_load_and_handoff_retains_definition() {

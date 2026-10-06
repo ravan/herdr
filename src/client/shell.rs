@@ -29,6 +29,7 @@ mod notification_policy;
 mod notifications;
 mod organization;
 mod overlay_input;
+mod pane_missions;
 mod preferences;
 mod render;
 mod scroll;

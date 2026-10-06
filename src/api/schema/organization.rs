@@ -28,3 +28,13 @@ pub struct MissionAssignParams {
     pub target: crate::organization::MissionTarget,
     pub mission_id: crate::organization::MissionId,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MissionAssignPaneParams {
+    pub pane_id: String,
+    pub mission_id: crate::organization::MissionId,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MissionClearPaneOverrideParams {
+    pub pane_id: String,
+}

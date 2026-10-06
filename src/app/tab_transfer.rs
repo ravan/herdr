@@ -47,6 +47,21 @@ impl AppState {
                 tab_id: new_id.clone(),
             },
         )?;
+        let pane_identities = pane_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, pane)| {
+                let old = self.workspaces[source].public_pane_number(*pane)?;
+                Some((
+                    crate::workspace::public_pane_id_for_number(&self.workspaces[source].id, old),
+                    crate::workspace::public_pane_id_for_number(
+                        workspace_id,
+                        self.workspaces[destination].next_public_pane_number + offset,
+                    ),
+                ))
+            })
+            .collect::<Vec<_>>();
+        organization.relocate_pane_missions(&pane_identities)?;
         // Preflight source cleanup too, so revision exhaustion never leaves a partial move.
         if self.workspaces[source].tabs.len() == 1 {
             let live = self

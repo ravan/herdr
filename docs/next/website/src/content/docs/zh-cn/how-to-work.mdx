@@ -118,4 +118,11 @@ herdr --remote workbox
 
 JSON 调用者可以使用 `mission.create` 指定名称和可选的目标说明，使用 `mission.assign` 指定目标 ID 和类似 `{"kind":"tab","tab_id":"w1:t1"}` 的分配对象。请从 `tab.list` 获取当前公开标签页 ID。`tab.transfer` 必须包含 `tab_id`、目标 `workspace_id` 和 `insert_index`；它会移动整个标签页，并将分配更新为移动后的公开 ID。移动被拒绝时会保留原分配。`tab.move` 仍用于同一工作区内的排序。
 
+窗格默认继承标签页的目标。右键点击代理行或终端窗格，选择 **Assign mission…**，即可单独分配该窗格。**Clear override** 会恢复菜单中说明的标签页目标。重新分配标签页不会覆盖窗格的显式分配。新拆分的窗格继承标签页目标；移动窗格会保留显式分配，没有显式分配时则继承目标标签页。代理重启不会改变所属关系。Shell 和编辑器也可分配目标，但不会显示为代理行。
+
+点击代理区域的分组标签，可在 spaces、missions 和 priority 之间切换。按目标分组沿用现有代理名称和状态，也会显示已收起集合中的代理及其 **Hibernate** 标签。每一行仍可用于聚焦代理。分配其他端点的代理前，请先通过常规导航选择该端点；各端点目录保持独立。
+
+JSON 调用者可用 `mission.assign_pane` 指定 `pane_id` 和 `mission_id`，用 `mission.clear_pane_override` 指定 `pane_id`。当前公开窗格 ID 可从 `pane.list` 获取。`organization.get` 在 `pane_mission_assignments` 中返回显式分配；有效所属关系在没有覆盖时继承标签页分配。两个方法分别公布支持情况，因此某项操作不可用时，集合、标签页目标和终端仍可正常使用。
+
+
 不提供目标方法的服务器仍然保留现有集合和终端操作。

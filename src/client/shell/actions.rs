@@ -384,6 +384,8 @@ impl ClientShellState {
             method,
             crate::api::schema::Method::CollectionSetHibernating(_)
                 | crate::api::schema::Method::MissionCreate(_)
+                | crate::api::schema::Method::MissionAssignPane(_)
+                | crate::api::schema::Method::MissionClearPaneOverride(_)
                 | crate::api::schema::Method::MissionAssign(_)
         ) || self
             .endpoints

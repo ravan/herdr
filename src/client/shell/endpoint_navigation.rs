@@ -106,7 +106,14 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) -> bool {
         use crate::input::KeybindAction;
-        if !self.multi_endpoint_active() {
+        let organization_agent_navigation = matches!(
+            action,
+            KeybindAction::PreviousAgent | KeybindAction::NextAgent | KeybindAction::FocusAgent(_)
+        ) && self
+            .endpoints
+            .iter()
+            .any(|e| e.organization.is_some());
+        if !self.multi_endpoint_active() && !organization_agent_navigation {
             return false;
         }
         if matches!(

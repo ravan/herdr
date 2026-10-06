@@ -9,7 +9,8 @@ impl ClientContextMenuOverlay {
             action,
         };
         let mut items = match &self.target {
-            ClientContextMenuTarget::MissionPicker { missions, .. } => missions
+            ClientContextMenuTarget::PaneMissionPicker { missions, .. }
+            | ClientContextMenuTarget::MissionPicker { missions, .. } => missions
                 .iter()
                 .enumerate()
                 .map(|(index, mission)| ClientContextMenuItem {
@@ -117,6 +118,7 @@ impl ClientContextMenuOverlay {
                 source_pane_id,
                 has_manual_label,
                 right_click_passthrough,
+                mission_context,
                 ..
             } => {
                 let mut items = vec![item("Rename pane", Action::RenamePane)];
@@ -125,6 +127,27 @@ impl ClientContextMenuOverlay {
                 }
                 if source_pane_id.is_some() {
                     items.push(item("Swap with focused pane", Action::SwapWithFocusedPane));
+                }
+                if let Some(context) = mission_context {
+                    items.push(item(
+                        &format!(
+                            "Mission: {} ({})",
+                            context.membership,
+                            if context.explicit {
+                                "pane override"
+                            } else {
+                                "inherits tab"
+                            }
+                        ),
+                        Action::PaneMissionInfo,
+                    ));
+                    items.push(item("Assign mission…", Action::AssignPaneMission));
+                    if context.explicit {
+                        items.push(item(
+                            &format!("Clear override (inherit {})", context.inherited),
+                            Action::ClearPaneMissionOverride,
+                        ));
+                    }
                 }
                 items.extend([
                     item("Split right", Action::SplitRight),
@@ -268,6 +291,7 @@ impl ClientShellState {
             .filter(|focused| focused != &pane_id);
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Pane {
+                mission_context: self.pane_mission_context(&pane_id),
                 pane_id,
                 workspace_id: pane.workspace_id.clone(),
                 source_pane_id,
@@ -305,6 +329,13 @@ impl ClientShellState {
             return;
         };
         match menu.target {
+            ClientContextMenuTarget::PaneMissionPicker { context, missions } => {
+                if let ClientContextMenuAction::AssignMission(index) = action {
+                    if let Some(mission) = missions.get(index) {
+                        self.submit_pane_mission(context, Some(mission.id.clone()), outcome);
+                    }
+                }
+            }
             ClientContextMenuTarget::MissionPicker {
                 workspace,
                 tab_id,
@@ -484,15 +515,35 @@ impl ClientShellState {
                 workspace_id,
                 source_pane_id,
                 right_click_passthrough,
+                mission_context,
                 ..
-            } => self.activate_pane_context_action(
-                pane_id,
-                workspace_id,
-                source_pane_id,
-                right_click_passthrough,
-                action,
-                outcome,
-            ),
+            } => match (action, mission_context) {
+                (ClientContextMenuAction::AssignPaneMission, Some(context)) => {
+                    self.open_pane_mission_picker(context, outcome)
+                }
+                (ClientContextMenuAction::ClearPaneMissionOverride, Some(context)) => {
+                    self.submit_pane_mission(context, None, outcome)
+                }
+                (ClientContextMenuAction::PaneMissionInfo, Some(context)) => {
+                    outcome.repaint |= self.push_endpoint_notice(
+                        ClientEndpointNoticeKind::Rejected,
+                        "mission.membership",
+                        "Pane mission",
+                        format!(
+                            "{}; clearing an override inherits the tab's mission: {}.",
+                            context.membership, context.inherited
+                        ),
+                    );
+                }
+                _ => self.activate_pane_context_action(
+                    pane_id,
+                    workspace_id,
+                    source_pane_id,
+                    right_click_passthrough,
+                    action,
+                    outcome,
+                ),
+            },
         }
         outcome.repaint = true;
     }

@@ -519,6 +519,9 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
     AddToMission,
+    AssignPaneMission,
+    ClearPaneMissionOverride,
+    PaneMissionInfo,
     AssignMission(usize),
     NewMission,
     MissionDefinition(usize),
@@ -544,6 +547,10 @@ pub(super) enum ClientContextMenuAction {
 
 #[derive(Debug)]
 pub(super) enum ClientContextMenuTarget {
+    PaneMissionPicker {
+        context: super::pane_missions::PaneMissionMenuContext,
+        missions: Vec<crate::organization::Mission>,
+    },
     Missions {
         missions: Vec<(crate::organization::Mission, usize)>,
     },
@@ -580,6 +587,7 @@ pub(super) enum ClientContextMenuTarget {
     Pane {
         pane_id: String,
         workspace_id: String,
+        mission_context: Option<super::pane_missions::PaneMissionMenuContext>,
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,

@@ -1779,6 +1779,32 @@ impl ClientShellState {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Right) => {
+                if let Some((_, endpoint, pane_id)) = self
+                    .hits
+                    .endpoint_agents
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    if endpoint != self.active_endpoint_id {
+                        outcome.repaint |= self.push_endpoint_notice(ClientEndpointNoticeKind::Rejected, "mission.endpoint_scope", "Select endpoint first", "Open this agent's endpoint through normal navigation before assigning its pane.");
+                        return;
+                    }
+                    self.open_pane_context_menu(pane_id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
+                if let Some((_, pane_id)) = self
+                    .hits
+                    .agents
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.open_pane_context_menu(pane_id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
                 if let Some((_, endpoint, id)) = self
                     .hits
                     .collections
@@ -2024,7 +2050,17 @@ impl ClientShellState {
                 }
                 if super::contains(self.hits.agent_sort_toggle, point) {
                     let sort = match self.config.agent_panel_sort {
-                        crate::config::AgentPanelSortConfig::Spaces => {
+                        crate::config::AgentPanelSortConfig::Spaces
+                            if self
+                                .endpoints
+                                .iter()
+                                .find(|e| e.endpoint_id == self.active_endpoint_id)
+                                .is_some_and(|e| e.organization.is_some()) =>
+                        {
+                            crate::config::AgentPanelSortConfig::Missions
+                        }
+                        crate::config::AgentPanelSortConfig::Spaces
+                        | crate::config::AgentPanelSortConfig::Missions => {
                             crate::config::AgentPanelSortConfig::Priority
                         }
                         crate::config::AgentPanelSortConfig::Priority => {

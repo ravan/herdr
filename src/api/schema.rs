@@ -83,6 +83,10 @@ pub enum Method {
     MissionCreate(MissionCreateParams),
     #[serde(rename = "mission.assign")]
     MissionAssign(MissionAssignParams),
+    #[serde(rename = "mission.assign_pane")]
+    MissionAssignPane(MissionAssignPaneParams),
+    #[serde(rename = "mission.clear_pane_override")]
+    MissionClearPaneOverride(MissionClearPaneOverrideParams),
     #[serde(rename = "collection.create")]
     CollectionCreate(CollectionCreateParams),
     #[serde(rename = "collection.assign_family")]

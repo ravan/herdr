@@ -582,6 +582,8 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::OrganizationGet(_) => "organization.get",
         Method::CollectionSetHibernating(_) => "collection.set_hibernating",
         Method::MissionCreate(_) => "mission.create",
+        Method::MissionAssignPane(_) => "mission.assign_pane",
+        Method::MissionClearPaneOverride(_) => "mission.clear_pane_override",
         Method::MissionAssign(_) => "mission.assign",
         Method::CollectionCreate(_) => "collection.create",
         Method::CollectionAssignFamily(_) => "collection.assign_family",

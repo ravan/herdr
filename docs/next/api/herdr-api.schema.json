@@ -2431,6 +2431,21 @@
           ],
           "type": "object"
         },
+        "MissionAssignPaneParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "mission_id"
+          ],
+          "type": "object"
+        },
         "MissionAssignParams": {
           "properties": {
             "mission_id": {
@@ -2443,6 +2458,17 @@
           "required": [
             "target",
             "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionClearPaneOverrideParams": {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
           ],
           "type": "object"
         },
@@ -5111,6 +5137,38 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/MissionAssignParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.assign_pane",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionAssignPaneParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.clear_pane_override",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionClearPaneOverrideParams"
             }
           },
           "required": [
@@ -8219,6 +8277,13 @@
               },
               "type": "array"
             },
+            "pane_mission_assignments": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PaneMissionAssignment"
+              },
+              "type": "array"
+            },
             "revision": {
               "format": "uint64",
               "minimum": 0,
@@ -8584,6 +8649,21 @@
             "row",
             "start_col",
             "end_col"
+          ],
+          "type": "object"
+        },
+        "PaneMissionAssignment": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "mission_id"
           ],
           "type": "object"
         },

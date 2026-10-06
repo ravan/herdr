@@ -4,11 +4,23 @@ pub(super) fn pending_label(method: &str) -> Option<&'static str> {
     match method {
         "collection.set_hibernating" => Some(" updating Hibernate…"),
         "mission.create" => Some(" creating mission…"),
+        "mission.assign_pane" => Some(" assigning pane mission…"),
+        "mission.clear_pane_override" => Some(" clearing pane override…"),
         "mission.assign" => Some(" assigning mission…"),
         "collection.create" => Some(" creating collection…"),
         "collection.assign_family" => Some(" moving family…"),
         _ => None,
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct PaneMissionMembership {
+    pub(super) mission_id: Option<crate::organization::MissionId>,
+    pub(super) label: Option<String>,
+    pub(super) order: u64,
+    pub(super) explicit: bool,
+    pub(super) inherited_label: Option<String>,
+    pub(super) parked: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -259,6 +271,7 @@ impl ClientShellState {
                 endpoint.pending_organization = None;
                 endpoint.organization_rows.clear();
                 endpoint.mission_labels.clear();
+                endpoint.pane_missions.clear();
             }
         }
     }
@@ -393,6 +406,7 @@ impl ClientShellState {
             endpoint.organization = None;
             endpoint.organization_rows.clear();
             endpoint.mission_labels.clear();
+            endpoint.pane_missions.clear();
         }
         if projection_changed {
             self.rebuild_organization_rows(endpoint_id);
@@ -425,6 +439,52 @@ impl ClientShellState {
                     .iter()
                     .find(|mission| mission.id == assignment.mission_id)?;
                 Some((tab_id.clone(), mission.name.as_str().to_owned()))
+            })
+            .collect();
+        let pane_missions = snapshot
+            .panes
+            .iter()
+            .map(|pane| {
+                let organization = &catalog.organization;
+                let mission_id = organization
+                    .effective_pane_mission(&pane.pane_id, &pane.tab_id)
+                    .cloned();
+                let mission = mission_id
+                    .as_ref()
+                    .and_then(|id| organization.missions.iter().find(|m| &m.id == id));
+                let inherited = organization
+                    .mission_for(&crate::organization::MissionTarget::Tab {
+                        tab_id: pane.tab_id.clone(),
+                    })
+                    .and_then(|id| organization.missions.iter().find(|m| &m.id == id));
+                let parked = snapshot
+                    .workspaces
+                    .iter()
+                    .find(|ws| ws.workspace_id == pane.workspace_id)
+                    .and_then(|ws| {
+                        let family = match &ws.worktree {
+                            Some(worktree) => crate::organization::FamilyId::Managed {
+                                key: worktree.key.clone(),
+                            },
+                            None => crate::organization::FamilyId::Standalone {
+                                workspace_id: ws.workspace_id.clone(),
+                            },
+                        };
+                        let id = organization.collection_for(&family)?;
+                        organization.collections.iter().find(|c| &c.id == id)
+                    })
+                    .is_some_and(|c| c.hibernating);
+                (
+                    pane.pane_id.clone(),
+                    PaneMissionMembership {
+                        mission_id,
+                        label: mission.map(|m| m.name.as_str().to_owned()),
+                        order: mission.map_or(u64::MAX, |m| m.order),
+                        explicit: organization.pane_override(&pane.pane_id).is_some(),
+                        inherited_label: inherited.map(|m| m.name.as_str().to_owned()),
+                        parked,
+                    },
+                )
             })
             .collect();
         let empty = HashSet::new();
@@ -494,6 +554,7 @@ impl ClientShellState {
                 }
             }
         }
+        self.endpoints[index].pane_missions = pane_missions;
         self.endpoints[index].mission_labels = mission_labels;
         self.endpoints[index].organization_rows = rows;
     }

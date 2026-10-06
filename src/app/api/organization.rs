@@ -3,6 +3,30 @@ use crate::api::schema::{CollectionAssignFamilyParams, CollectionCreateParams, R
 use crate::app::App;
 
 impl App {
+    pub(super) fn handle_mission_assign_pane(
+        &mut self,
+        id: String,
+        params: crate::api::schema::MissionAssignPaneParams,
+    ) -> String {
+        match self
+            .state
+            .assign_pane_mission(params.pane_id, params.mission_id)
+        {
+            Ok(()) => self.handle_organization_get(id),
+            Err(code) => encode_error(id, code, "Cannot assign pane mission"),
+        }
+    }
+    pub(super) fn handle_mission_clear_pane_override(
+        &mut self,
+        id: String,
+        params: crate::api::schema::MissionClearPaneOverrideParams,
+    ) -> String {
+        match self.state.clear_pane_mission(&params.pane_id) {
+            Ok(()) => self.handle_organization_get(id),
+            Err(code) => encode_error(id, code, "Cannot clear pane mission override"),
+        }
+    }
+
     pub(super) fn handle_mission_create(
         &mut self,
         id: String,
@@ -247,6 +271,358 @@ mod mission_tests {
         .expect("public mission method");
         serde_json::from_str(&app.handle_api_request(request)).unwrap()
     }
+    #[test]
+    fn mc_s4_combined_pane_tab_and_family_death_consumes_reserved_cleanup_capacity() {
+        let mut app = app();
+        app.state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("Last pane"));
+        app.state.ensure_test_terminals();
+        let workspace = app.public_workspace_id(1);
+        let tab = app.public_tab_id(1, 0).unwrap();
+        let pane = app.state.workspaces[1].tabs[0].root_pane;
+        let pane_id = app.public_pane_id(1, pane).unwrap();
+        let mission = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Retained"}),
+        )["result"]["mission"]["id"]
+            .clone();
+        let collection = call(
+            &mut app,
+            "collection.create",
+            serde_json::json!({"name":"Retained"}),
+        )["result"]["collection"]["id"]
+            .clone();
+        call(
+            &mut app,
+            "mission.assign",
+            serde_json::json!({"target":{"kind":"tab","tab_id":tab},"mission_id":mission}),
+        );
+        call(
+            &mut app,
+            "mission.assign_pane",
+            serde_json::json!({"pane_id":pane_id,"mission_id":mission}),
+        );
+        call(
+            &mut app,
+            "collection.assign_family",
+            serde_json::json!({"family_id":{"kind":"standalone","workspace_id":workspace},"collection_id":collection}),
+        );
+        app.state.organization.revision = u64::MAX - 3;
+        app.state
+            .handle_app_event(crate::events::AppEvent::PaneDied {
+                pane_id: pane,
+                exit_reason: crate::platform::ChildExitReason::Exited,
+            });
+        let catalog = call(&mut app, "organization.get", serde_json::json!({}))["result"]
+            ["organization"]
+            .clone();
+        assert_eq!(catalog["pane_mission_assignments"], serde_json::json!([]));
+        assert_eq!(catalog["mission_assignments"], serde_json::json!([]));
+        assert_eq!(catalog["family_assignments"], serde_json::json!([]));
+        assert_eq!(catalog["revision"], u64::MAX);
+        assert_eq!(catalog["missions"].as_array().unwrap().len(), 1);
+        assert_eq!(catalog["collections"].as_array().unwrap().len(), 1);
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn mc_s4_tab_reassignment_and_process_changes_preserve_pane_override() {
+        let mut app = app();
+        let tab = app.public_tab_id(0, 2).unwrap();
+        let panes = app.state.workspaces[0].tabs[2].layout.pane_ids();
+        let overridden = app.public_pane_id(0, panes[0]).unwrap();
+        let inherited = app.public_pane_id(0, panes[1]).unwrap();
+        let first = app
+            .state
+            .create_mission("Agent runtime".into(), None)
+            .unwrap();
+        let second = app
+            .state
+            .create_mission("Tako platform".into(), None)
+            .unwrap();
+        app.state
+            .assign_mission(
+                crate::organization::MissionTarget::Tab {
+                    tab_id: tab.clone(),
+                },
+                first.id.clone(),
+            )
+            .unwrap();
+        app.state
+            .assign_pane_mission(overridden.clone(), first.id.clone())
+            .unwrap();
+        app.state
+            .assign_mission(
+                crate::organization::MissionTarget::Tab {
+                    tab_id: tab.clone(),
+                },
+                second.id.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            app.state
+                .organization
+                .effective_pane_mission(&overridden, &tab),
+            Some(&first.id)
+        );
+        assert_eq!(
+            app.state
+                .organization
+                .effective_pane_mission(&inherited, &tab),
+            Some(&second.id)
+        );
+        let before = call(&mut app, "organization.get", serde_json::json!({}));
+        for state in ["working", "blocked", "idle"] {
+            let reported = call(
+                &mut app,
+                "pane.report_agent",
+                serde_json::json!({"pane_id":overridden,"source":"demo","agent":"codex","state":state}),
+            );
+            assert!(reported.get("error").is_none(), "{reported}");
+            assert_eq!(
+                call(&mut app, "organization.get", serde_json::json!({})),
+                before
+            );
+        }
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn mc_s4_whole_tab_transfer_remaps_all_pane_overrides_and_tab_membership() {
+        let mut app = app();
+        app.state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("Destination"));
+        app.state.ensure_test_terminals();
+        let source = app.public_tab_id(0, 2).unwrap();
+        let destination = app.public_workspace_id(1);
+        let panes = app.state.workspaces[0].tabs[2].layout.pane_ids();
+        let first = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Agent runtime"}),
+        )["result"]["mission"]["id"]
+            .clone();
+        let second = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Tako platform"}),
+        )["result"]["mission"]["id"]
+            .clone();
+        call(
+            &mut app,
+            "mission.assign",
+            serde_json::json!({"target":{"kind":"tab","tab_id":source},"mission_id":first}),
+        );
+        for pane in &panes {
+            let pane_id = app.public_pane_id(0, *pane).unwrap();
+            call(
+                &mut app,
+                "mission.assign_pane",
+                serde_json::json!({"pane_id":pane_id,"mission_id":second}),
+            );
+        }
+        let revision = app.state.organization.revision;
+        app.state.organization.revision = u64::MAX - panes.len() as u64 - 1;
+        let before = app.session_snapshot();
+        let before_catalog = app.state.organization.clone();
+        let rejected = call(
+            &mut app,
+            "tab.transfer",
+            serde_json::json!({"tab_id":source,"workspace_id":destination,"insert_index":0}),
+        );
+        assert_eq!(rejected["error"]["code"], "organization_revision_exhausted");
+        assert_eq!(app.session_snapshot(), before);
+        assert_eq!(app.state.organization, before_catalog);
+        app.state.organization.revision = revision;
+        let moved = call(
+            &mut app,
+            "tab.transfer",
+            serde_json::json!({"tab_id":source,"workspace_id":destination,"insert_index":0}),
+        );
+        assert!(moved.get("error").is_none(), "{moved}");
+        let catalog = call(&mut app, "organization.get", serde_json::json!({}));
+        let expected = panes.iter().map(|pane| serde_json::json!({"pane_id":app.public_pane_id(1,*pane).unwrap(),"mission_id":second})).collect::<Vec<_>>();
+        assert_eq!(
+            catalog["result"]["organization"]["pane_mission_assignments"],
+            serde_json::json!(expected)
+        );
+        assert_eq!(
+            catalog["result"]["organization"]["mission_assignments"][0]["target"]["tab_id"],
+            moved["result"]["tab"]["tab_id"]
+        );
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn mc_s4_pane_move_keeps_override_and_rejects_exhaustion_before_detach() {
+        let mut app = app();
+        app.state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("Destination"));
+        app.state.ensure_test_terminals();
+        let pane = app.state.workspaces[0].tabs[2].layout.pane_ids()[0];
+        let pane_id = app.public_pane_id(0, pane).unwrap();
+        let destination = app.public_tab_id(1, 0).unwrap();
+        let mission = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Tako platform"}),
+        )["result"]["mission"]["id"]
+            .clone();
+        call(
+            &mut app,
+            "mission.assign_pane",
+            serde_json::json!({"pane_id":pane_id,"mission_id":mission}),
+        );
+        let params = serde_json::json!({"pane_id":pane_id,"destination":{"type":"tab","tab_id":destination,"split":"right"},"focus":false});
+        app.state.organization.revision = u64::MAX - 1;
+        let before = app.session_snapshot();
+        let org = app.state.organization.clone();
+        let failed = call(&mut app, "pane.move", params.clone());
+        assert_eq!(failed["error"]["code"], "organization_revision_exhausted");
+        assert_eq!(app.session_snapshot(), before);
+        assert_eq!(app.state.organization, org);
+        app.state.organization.revision = 2;
+        let moved = call(&mut app, "pane.move", params);
+        assert!(moved.get("error").is_none(), "{moved}");
+        let new_id = app.public_pane_id(1, pane).unwrap();
+        assert_ne!(new_id, pane_id);
+        assert_eq!(
+            call(&mut app, "organization.get", serde_json::json!({}))["result"]["organization"]
+                ["pane_mission_assignments"],
+            serde_json::json!([{"pane_id":new_id,"mission_id":mission}])
+        );
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn mc_s4_pane_death_at_revision_boundary_retains_empty_definitions() {
+        let mut app = app();
+        let pane = app.state.workspaces[0].tabs[2].layout.pane_ids()[0];
+        let pane_id = app.public_pane_id(0, pane).unwrap();
+        let mission = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Empty"}),
+        )["result"]["mission"]
+            .clone();
+        call(
+            &mut app,
+            "mission.assign_pane",
+            serde_json::json!({"pane_id":pane_id,"mission_id":mission["id"]}),
+        );
+        app.state.organization.revision = u64::MAX - 1;
+        assert_eq!(
+            call(
+                &mut app,
+                "mission.create",
+                serde_json::json!({"name":"Overflow"})
+            )["error"]["code"],
+            "organization_revision_exhausted"
+        );
+        app.state
+            .handle_app_event(crate::events::AppEvent::PaneDied {
+                pane_id: pane,
+                exit_reason: crate::platform::ChildExitReason::Exited,
+            });
+        let result = call(&mut app, "organization.get", serde_json::json!({}));
+        assert_eq!(
+            result["result"]["organization"]["pane_mission_assignments"],
+            serde_json::json!([])
+        );
+        assert_eq!(result["result"]["organization"]["revision"], u64::MAX);
+        assert_eq!(
+            result["result"]["organization"]["missions"],
+            serde_json::json!([mission])
+        );
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn mc_s4_pane_override_reassign_clear_preserves_tab_and_terminal() {
+        let mut app = app();
+        let tab_id = app.public_tab_id(0, 2).unwrap();
+        let pane_id = app
+            .public_pane_id(0, app.state.workspaces[0].tabs[2].layout.pane_ids()[0])
+            .unwrap();
+        let before = app.session_snapshot();
+        let runtime = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Agent runtime"}),
+        )["result"]["mission"]["id"]
+            .clone();
+        let tako = call(
+            &mut app,
+            "mission.create",
+            serde_json::json!({"name":"Tako platform"}),
+        )["result"]["mission"]["id"]
+            .clone();
+        call(
+            &mut app,
+            "mission.assign",
+            serde_json::json!({"target":{"kind":"tab","tab_id":tab_id},"mission_id":runtime}),
+        );
+        for id in [&runtime, &tako] {
+            let result = call(
+                &mut app,
+                "mission.assign_pane",
+                serde_json::json!({"pane_id":pane_id,"mission_id":id}),
+            );
+            assert_eq!(
+                result["result"]["organization"]["pane_mission_assignments"],
+                serde_json::json!([{"pane_id":pane_id,"mission_id":id}])
+            );
+        }
+        let confirmed = app.state.organization.clone();
+        app.state.session_dirty = false;
+        call(
+            &mut app,
+            "mission.assign_pane",
+            serde_json::json!({"pane_id":pane_id,"mission_id":tako}),
+        );
+        assert!(!app.state.session_dirty);
+        for (pane, mission, code) in [
+            ("p_1_1", tako.clone(), "pane_not_found"),
+            (&pane_id, serde_json::json!("missing"), "mission_not_found"),
+        ] {
+            assert_eq!(
+                call(
+                    &mut app,
+                    "mission.assign_pane",
+                    serde_json::json!({"pane_id":pane,"mission_id":mission})
+                )["error"]["code"],
+                code
+            );
+            assert_eq!(app.state.organization, confirmed);
+        }
+        let cleared = call(
+            &mut app,
+            "mission.clear_pane_override",
+            serde_json::json!({"pane_id":pane_id}),
+        );
+        assert_eq!(
+            cleared["result"]["organization"]["pane_mission_assignments"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            cleared["result"]["organization"]["mission_assignments"][0]["mission_id"],
+            runtime
+        );
+        app.state.session_dirty = false;
+        call(
+            &mut app,
+            "mission.clear_pane_override",
+            serde_json::json!({"pane_id":pane_id}),
+        );
+        assert!(!app.state.session_dirty);
+        assert_eq!(app.session_snapshot(), before);
+        app.state.assert_invariants_for_test();
+    }
+
     #[test]
     fn mc_s3_create_and_assign_existing_tab_preserves_terminal_work() {
         let mut app = app();

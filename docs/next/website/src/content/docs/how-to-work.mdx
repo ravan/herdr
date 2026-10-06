@@ -118,4 +118,11 @@ Each tab has one explicit mission. Choosing another mission replaces its assignm
 
 JSON callers can use `mission.create` with a name and optional objective, and `mission.assign` with a mission ID and a target such as `{"kind":"tab","tab_id":"w1:t1"}`. Use the current public tab ID from `tab.list`. `tab.transfer` requires `tab_id`, destination `workspace_id`, and `insert_index`; it moves the complete tab and updates its assignment to the resulting public ID. A rejected transfer preserves the original assignment. `tab.move` continues to reorder within one workspace.
 
+Panes inherit their tab's mission. Right-click an agent row or terminal pane and choose **Assign mission…** to override that pane only. **Clear override** restores the tab's mission, as explained in the menu. Tab reassignment leaves explicit pane overrides intact. New splits inherit the tab; moving a pane preserves its override or inherits the destination tab's mission. Membership follows the terminal pane across agent restarts. Shell and editor panes can have assignments but do not appear as agent rows.
+
+Click the agents section's grouping label to cycle through spaces, missions, and priority. Mission grouping uses the existing agent labels and status, includes agents in parked collections with a **Hibernate** label, and keeps each row focusable. Select an endpoint through normal navigation before assigning its agents; catalogs remain separate.
+
+JSON callers use `mission.assign_pane` with `pane_id` and `mission_id`, and `mission.clear_pane_override` with `pane_id`. Use the current public pane ID from `pane.list`. `organization.get` returns explicit overrides in `pane_mission_assignments`; effective membership falls back to the owning tab's assignment. These methods are advertised independently, so unavailable actions leave collections, tab missions, and terminals usable.
+
+
 Servers that do not advertise mission methods retain their existing collection and terminal controls.

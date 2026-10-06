@@ -89,6 +89,12 @@ pub struct MissionAssignment {
     pub mission_id: MissionId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneMissionAssignment {
+    pub pane_id: String,
+    pub mission_id: MissionId,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct OrganizationState {
     pub revision: u64,
@@ -99,6 +105,8 @@ pub struct OrganizationState {
     pub missions: Vec<Mission>,
     #[serde(default)]
     pub mission_assignments: Vec<MissionAssignment>,
+    #[serde(default)]
+    pub pane_mission_assignments: Vec<PaneMissionAssignment>,
 }
 
 impl<'de> Deserialize<'de> for OrganizationState {
@@ -113,6 +121,8 @@ impl<'de> Deserialize<'de> for OrganizationState {
             missions: Vec<Mission>,
             #[serde(default)]
             mission_assignments: Vec<MissionAssignment>,
+            #[serde(default)]
+            pane_mission_assignments: Vec<PaneMissionAssignment>,
         }
         let catalog = Catalog::deserialize(deserializer)?;
         let state = Self {
@@ -121,13 +131,165 @@ impl<'de> Deserialize<'de> for OrganizationState {
             family_assignments: catalog.family_assignments,
             missions: catalog.missions,
             mission_assignments: catalog.mission_assignments,
+            pane_mission_assignments: catalog.pane_mission_assignments,
         };
         state.validate().map_err(serde::de::Error::custom)?;
         Ok(state)
     }
 }
 
+/// A catalog mutation reserved before terminal detachment and committed only on success.
+pub(crate) struct PaneMissionRelocation {
+    organization: OrganizationState,
+    index: usize,
+}
+impl PaneMissionRelocation {
+    pub(crate) fn complete(mut self, new_pane_id: String) -> OrganizationState {
+        self.organization.pane_mission_assignments[self.index].pane_id = new_pane_id;
+        self.organization
+    }
+}
+
 impl OrganizationState {
+    /// The caller allocates a fresh destination public ID; no other catalog writes may
+    /// occur between preparation and completion of this synchronous move.
+    pub(crate) fn prepare_pane_relocation(
+        &self,
+        pane_id: &str,
+    ) -> Result<Option<PaneMissionRelocation>, &'static str> {
+        let Some(index) = self
+            .pane_mission_assignments
+            .iter()
+            .position(|a| a.pane_id == pane_id)
+        else {
+            return Ok(None);
+        };
+        let revision = self.next_revision(self.standalone_count())?;
+        let mut organization = self.clone();
+        organization.revision = revision;
+        Ok(Some(PaneMissionRelocation {
+            organization,
+            index,
+        }))
+    }
+
+    pub(crate) fn relocate_pane_missions(
+        &mut self,
+        identities: &[(String, String)],
+    ) -> Result<(), &'static str> {
+        let mut assignments = self.pane_mission_assignments.clone();
+        for assignment in &mut assignments {
+            if let Some((_, new)) = identities
+                .iter()
+                .find(|(old, _)| old == &assignment.pane_id)
+            {
+                assignment.pane_id = new.clone();
+            }
+        }
+        if assignments == self.pane_mission_assignments {
+            return Ok(());
+        }
+        let mut ids = std::collections::HashSet::new();
+        if assignments
+            .iter()
+            .any(|a| a.pane_id.is_empty() || !ids.insert(&a.pane_id))
+        {
+            return Err("duplicate_mission_target");
+        }
+        let revision = self.next_revision(self.standalone_count())?;
+        self.pane_mission_assignments = assignments;
+        self.revision = revision;
+        Ok(())
+    }
+    pub fn pane_override(&self, pane_id: &str) -> Option<&MissionId> {
+        self.pane_mission_assignments
+            .iter()
+            .find(|a| a.pane_id == pane_id)
+            .map(|a| &a.mission_id)
+    }
+    pub fn effective_pane_mission(&self, pane_id: &str, tab_id: &str) -> Option<&MissionId> {
+        self.pane_override(pane_id).or_else(|| {
+            self.mission_for(&MissionTarget::Tab {
+                tab_id: tab_id.to_owned(),
+            })
+        })
+    }
+    pub fn assign_pane_mission(
+        &mut self,
+        pane_id: String,
+        mission_id: MissionId,
+        live: &[String],
+    ) -> Result<bool, &'static str> {
+        if !live.contains(&pane_id) {
+            return Err("pane_not_found");
+        }
+        if !self.missions.iter().any(|m| m.id == mission_id) {
+            return Err("mission_not_found");
+        }
+        if self.pane_override(&pane_id) == Some(&mission_id) {
+            return Ok(false);
+        }
+        let count = self.pane_mission_assignments.len()
+            + usize::from(self.pane_override(&pane_id).is_none());
+        let revision = self.next_revision_with_counts(
+            self.standalone_count(),
+            self.mission_assignments.len(),
+            count,
+        )?;
+        self.pane_mission_assignments
+            .retain(|a| a.pane_id != pane_id);
+        self.pane_mission_assignments.push(PaneMissionAssignment {
+            pane_id,
+            mission_id,
+        });
+        self.revision = revision;
+        Ok(true)
+    }
+    pub fn retain_live_pane_missions(
+        &mut self,
+        live: &[String],
+    ) -> Result<Vec<String>, &'static str> {
+        let removed = self
+            .pane_mission_assignments
+            .iter()
+            .filter(|a| !live.contains(&a.pane_id))
+            .map(|a| a.pane_id.clone())
+            .collect::<Vec<_>>();
+        if removed.is_empty() {
+            return Ok(removed);
+        }
+        let revision = self.next_revision_with_counts(
+            self.standalone_count(),
+            self.mission_assignments.len(),
+            self.pane_mission_assignments.len() - removed.len(),
+        )?;
+        self.pane_mission_assignments
+            .retain(|a| !removed.contains(&a.pane_id));
+        self.revision = revision;
+        Ok(removed)
+    }
+    pub fn clear_pane_override(
+        &mut self,
+        pane_id: &str,
+        live: &[String],
+    ) -> Result<bool, &'static str> {
+        if !live.iter().any(|id| id == pane_id) {
+            return Err("pane_not_found");
+        }
+        if self.pane_override(pane_id).is_none() {
+            return Ok(false);
+        }
+        let revision = self.next_revision_with_counts(
+            self.standalone_count(),
+            self.mission_assignments.len(),
+            self.pane_mission_assignments.len() - 1,
+        )?;
+        self.pane_mission_assignments
+            .retain(|a| a.pane_id != pane_id);
+        self.revision = revision;
+        Ok(true)
+    }
+
     pub fn create_mission(
         &mut self,
         name: MissionName,
@@ -265,8 +427,24 @@ impl OrganizationState {
                 return Err("tab_not_found");
             }
         }
-        let reserve = u64::try_from(self.standalone_count() + self.mission_assignments.len())
-            .map_err(|_| "organization_revision_exhausted")?;
+        let mut panes = std::collections::HashSet::new();
+        for assignment in &self.pane_mission_assignments {
+            if assignment.pane_id.is_empty() {
+                return Err("pane_not_found");
+            }
+            if !panes.insert(&assignment.pane_id) {
+                return Err("duplicate_mission_target");
+            }
+            if !missions.contains(&assignment.mission_id) {
+                return Err("mission_not_found");
+            }
+        }
+        let reserve = u64::try_from(
+            self.standalone_count()
+                + self.mission_assignments.len()
+                + self.pane_mission_assignments.len(),
+        )
+        .map_err(|_| "organization_revision_exhausted")?;
         if self.revision > u64::MAX - reserve {
             return Err("organization_revision_exhausted");
         }
@@ -278,6 +456,7 @@ impl OrganizationState {
             && self.family_assignments.is_empty()
             && self.missions.is_empty()
             && self.mission_assignments.is_empty()
+            && self.pane_mission_assignments.is_empty()
     }
     pub fn collection_for(&self, family: &FamilyId) -> Option<&CollectionId> {
         self.family_assignments
@@ -374,7 +553,19 @@ impl OrganizationState {
         standalone_count: usize,
         target_count: usize,
     ) -> Result<u64, &'static str> {
-        let reserve = u64::try_from(standalone_count + target_count)
+        self.next_revision_with_counts(
+            standalone_count,
+            target_count,
+            self.pane_mission_assignments.len(),
+        )
+    }
+    fn next_revision_with_counts(
+        &self,
+        standalone_count: usize,
+        target_count: usize,
+        pane_count: usize,
+    ) -> Result<u64, &'static str> {
+        let reserve = u64::try_from(standalone_count + target_count + pane_count)
             .map_err(|_| "organization_revision_exhausted")?;
         let revision = self
             .revision

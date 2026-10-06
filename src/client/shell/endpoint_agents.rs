@@ -70,9 +70,38 @@ pub(super) fn render_expanded(
         config,
         agent_scroll,
         hits,
-        |row| row.agent.rows.len(),
+        |row| row.height(),
         |buffer, rect, row, hits| {
-            super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config);
+            let heading_height = u16::from(row.heading.is_some());
+            if let Some(heading) = &row.heading {
+                put_text(
+                    buffer,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    heading,
+                    Style::default()
+                        .fg(config.palette.accent)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            let agent_rect = Rect::new(
+                rect.x,
+                rect.y + heading_height,
+                rect.width,
+                rect.height.saturating_sub(heading_height),
+            );
+            super::agent_sidebar::render_agent_row(buffer, agent_rect, &row.agent, config);
+            if row.parked && agent_rect.height > row.agent.rows.len() as u16 {
+                put_text(
+                    buffer,
+                    agent_rect.x + 3,
+                    agent_rect.bottom() - 1,
+                    agent_rect.width.saturating_sub(3),
+                    "Hibernate",
+                    Style::default().fg(config.palette.overlay0),
+                );
+            }
             if row.stale {
                 buffer.set_style(
                     rect,
@@ -81,8 +110,14 @@ pub(super) fn render_expanded(
                         .add_modifier(Modifier::DIM),
                 );
             }
-            hits.endpoint_agents
-                .push((rect, row.endpoint_id.clone(), row.agent.pane_id.clone()));
+            if endpoints.len() == 1 {
+                hits.agents.push((agent_rect, row.agent.pane_id.clone()));
+            }
+            hits.endpoint_agents.push((
+                agent_rect,
+                row.endpoint_id.clone(),
+                row.agent.pane_id.clone(),
+            ));
         },
     );
 }
@@ -106,7 +141,7 @@ impl ClientShellState {
         };
         let heights = rows
             .iter()
-            .map(|row| row.agent.rows.len().max(1).min(u16::MAX as usize) as u16)
+            .map(|row| row.height().min(u16::MAX as usize) as u16)
             .collect::<Vec<_>>();
         let mut gaps = vec![self.config.agents.row_gap; rows.len()];
         if let Some(last) = gaps.last_mut() {
@@ -127,6 +162,16 @@ struct EndpointAgentRow {
     machine_label: String,
     stale: bool,
     agent: super::agent_sidebar::AgentRow,
+    heading: Option<String>,
+    parked: bool,
+}
+
+impl EndpointAgentRow {
+    fn height(&self) -> usize {
+        self.agent.rows.len().max(1)
+            + usize::from(self.heading.is_some())
+            + usize::from(self.parked)
+    }
 }
 
 fn agent_rows(
@@ -156,6 +201,13 @@ fn agent_rows(
         .flatten()
         .collect::<HashMap<_, _>>();
 
+    let grouped = config.agent_panel_sort == crate::config::AgentPanelSortConfig::Missions
+        && endpoints
+            .iter()
+            .find(|e| &e.endpoint_id == active_endpoint_id)
+            .and_then(|e| e.snapshot.as_ref())
+            .is_none_or(|s| s.agent_view_label.is_none());
+    let mut previous_group = None;
     super::aggregate_navigation::aggregate_agent_rows(
         endpoints,
         active_endpoint_id,
@@ -166,11 +218,28 @@ fn agent_rows(
         let key = (row.endpoint.endpoint_id.clone(), row.agent.pane_id.clone());
         let mut agent = rendered_rows.remove(&key)?;
         agent.focused &= row.endpoint.endpoint_id == active_endpoint_id;
+        let membership = row.endpoint.pane_missions.get(&row.agent.pane_id);
+        let group = (
+            row.endpoint.endpoint_id.clone(),
+            membership.and_then(|m| m.mission_id.clone()),
+        );
+        let heading = if grouped && previous_group.as_ref() != Some(&group) {
+            previous_group = Some(group);
+            Some(
+                membership
+                    .and_then(|m| m.label.as_ref())
+                    .map_or_else(|| " Unassigned".to_owned(), |label| format!(" ◆ {label}")),
+            )
+        } else {
+            None
+        };
         Some(EndpointAgentRow {
             endpoint_id: row.endpoint.endpoint_id.clone(),
             machine_label: row.endpoint.label.to_owned(),
             stale: row.endpoint.stale(),
             agent,
+            heading,
+            parked: membership.is_some_and(|m| m.parked),
         })
     })
     .collect()

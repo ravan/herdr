@@ -23,6 +23,8 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
     matches!(
         &request.method,
         Method::MissionCreate(_)
+            | Method::MissionAssignPane(_)
+            | Method::MissionClearPaneOverride(_)
             | Method::MissionAssign(_)
             | Method::CollectionSetHibernating(_)
             | Method::CollectionAssignFamily(_)

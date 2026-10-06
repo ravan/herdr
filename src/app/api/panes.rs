@@ -1132,6 +1132,57 @@ impl App {
             }
         };
 
+        // Destination IDs and insertion validity must be checked before extraction;
+        // no failed insertion may replace the source tab or its inherited mission.
+        let target_workspace = match &resolved {
+            ResolvedPaneMoveDestination::ExistingTab {
+                tab_id,
+                target_pane_id,
+                ..
+            } => {
+                let Some((ws_idx, tab_idx)) = self.parse_tab_id(tab_id) else {
+                    return encode_error(id, "tab_not_found", "target tab not found");
+                };
+                let layout = &self.state.workspaces[ws_idx].tabs[tab_idx].layout;
+                if !layout.pane_ids().contains(target_pane_id)
+                    || layout.pane_ids().contains(&source_pane_id)
+                {
+                    return encode_error(id, "pane_move_failed", "target pane could not be split");
+                }
+                Some(ws_idx)
+            }
+            ResolvedPaneMoveDestination::NewTab { workspace_id, .. } => {
+                self.parse_workspace_id(workspace_id)
+            }
+            ResolvedPaneMoveDestination::NewWorkspace { .. } => None,
+        };
+        if let Some(index) = target_workspace {
+            let ws = &self.state.workspaces[index];
+            if (index != source_ws_idx && ws.next_public_pane_number.checked_add(1).is_none())
+                || (matches!(resolved, ResolvedPaneMoveDestination::NewTab { .. })
+                    && ws.next_public_tab_number.checked_add(1).is_none())
+            {
+                return encode_error(
+                    id,
+                    "public_id_exhausted",
+                    "destination identity capacity exhausted",
+                );
+            }
+        }
+        let cross_workspace = target_workspace != Some(source_ws_idx);
+        let mission_relocation = if cross_workspace {
+            match self
+                .state
+                .organization
+                .prepare_pane_relocation(&previous_pane_id)
+            {
+                Ok(prepared) => prepared,
+                Err(code) => return encode_error(id, code, "Cannot move pane mission"),
+            }
+        } else {
+            None
+        };
+
         let previous_focus = self.state.current_pane_focus_target();
         let taken = match self
             .state
@@ -1319,6 +1370,9 @@ impl App {
             closed_tab_id: source_removed_tab_id.clone(),
             focused_pane_id,
         };
+        if let Some(prepared) = mission_relocation {
+            self.state.organization = prepared.complete(pane.pane_id.clone());
+        }
         if let Err(code) = self.state.reconcile_organization_families() {
             tracing::error!(code, "invalid organization state after pane move");
         }

@@ -22,6 +22,8 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "integration.list",
     "layout.set_split_ratio",
     "mission.assign",
+    "mission.assign_pane",
+    "mission.clear_pane_override",
     "mission.create",
     "organization.get",
     "pane.clear",
@@ -296,6 +298,14 @@ mod tests {
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
         for (method, digest) in [
+            (
+                "mission.assign_pane",
+                "7ddb05e7476da2677974bb51fe587d0835301139d478f2ca5fe9e49d7277b6d9",
+            ),
+            (
+                "mission.clear_pane_override",
+                "d979e8e5f5e0b4229653e245c72d7d842b711e212136348cff45321843a2282a",
+            ),
             (
                 "mission.assign",
                 "b2ab19234e8418c507c796baba1b6142be63c2ff073daf6646b9fa7a3b83ec20",

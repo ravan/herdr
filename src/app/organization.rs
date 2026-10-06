@@ -2,6 +2,43 @@ use super::AppState;
 use crate::organization::{Collection, CollectionId, CollectionName, FamilyId};
 
 impl AppState {
+    pub(crate) fn live_mission_panes(&self) -> Vec<String> {
+        self.workspaces
+            .iter()
+            .flat_map(|ws| {
+                ws.tabs
+                    .iter()
+                    .flat_map(|tab| tab.layout.pane_ids())
+                    .filter_map(|pane| {
+                        ws.public_pane_number(pane).map(|number| {
+                            crate::workspace::public_pane_id_for_number(&ws.id, number)
+                        })
+                    })
+            })
+            .collect()
+    }
+    pub(crate) fn assign_pane_mission(
+        &mut self,
+        pane_id: String,
+        mission: crate::organization::MissionId,
+    ) -> Result<(), &'static str> {
+        let live = self.live_mission_panes();
+        if self
+            .organization
+            .assign_pane_mission(pane_id, mission, &live)?
+        {
+            self.mark_session_dirty();
+        }
+        Ok(())
+    }
+    pub(crate) fn clear_pane_mission(&mut self, pane_id: &str) -> Result<(), &'static str> {
+        let live = self.live_mission_panes();
+        if self.organization.clear_pane_override(pane_id, &live)? {
+            self.mark_session_dirty();
+        }
+        Ok(())
+    }
+
     pub(crate) fn create_mission(
         &mut self,
         name: String,
@@ -26,6 +63,16 @@ impl AppState {
     pub(crate) fn reconcile_mission_targets(
         &mut self,
     ) -> Result<Vec<crate::organization::MissionTarget>, &'static str> {
+        let removed_panes = if self.organization.pane_mission_assignments.is_empty() {
+            Vec::new()
+        } else {
+            let live_panes = self.live_mission_panes();
+            self.organization.retain_live_pane_missions(&live_panes)?
+        };
+        if !removed_panes.is_empty() {
+            self.mark_session_dirty();
+            tracing::warn!(?removed_panes, "removed unavailable pane mission targets");
+        }
         if self.organization.mission_assignments.is_empty() {
             return Ok(Vec::new());
         }
