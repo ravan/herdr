@@ -3,6 +3,8 @@ use super::*;
 pub(super) fn pending_label(method: &str) -> Option<&'static str> {
     match method {
         "collection.set_hibernating" => Some(" updating Hibernate…"),
+        "mission.create" => Some(" creating mission…"),
+        "mission.assign" => Some(" assigning mission…"),
         "collection.create" => Some(" creating collection…"),
         "collection.assign_family" => Some(" moving family…"),
         _ => None,
@@ -33,6 +35,135 @@ pub(super) fn collection_workspace_entries(
 }
 
 impl ClientShellState {
+    pub(super) fn open_mission_picker(
+        &mut self,
+        tab_id: String,
+        workspace: WorkspaceNavigationTarget,
+        outcome: &mut ClientShellInput,
+    ) {
+        if !self.missions_available() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Unsupported,
+                "missions",
+                "Action unavailable",
+                "This server does not support missions.",
+            );
+            return;
+        }
+        let mut missions = self
+            .endpoints
+            .iter()
+            .find(|e| e.endpoint_id == self.active_endpoint_id)
+            .and_then(|e| e.organization.as_ref())
+            .map(|c| c.organization.missions.clone())
+            .unwrap_or_default();
+        if missions.is_empty() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Rejected,
+                "mission.no_missions",
+                "Create a mission first",
+                "Use Missions… in the menu to create a destination.",
+            );
+            return;
+        }
+        missions.sort_by_key(|mission| mission.order);
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::MissionPicker {
+                workspace,
+                tab_id,
+                missions,
+            },
+            x: self.hits.workspace_body.x,
+            y: self.hits.workspace_body.y,
+            highlighted: 0,
+        }));
+    }
+    pub(super) fn missions_available(&self) -> bool {
+        self.endpoints
+            .iter()
+            .find(|e| e.endpoint_id == self.active_endpoint_id)
+            .is_some_and(|e| {
+                e.organization_supported
+                    && e.methods.as_ref().is_some_and(|methods| {
+                        ["organization.get", "mission.create", "mission.assign"]
+                            .iter()
+                            .all(|method| methods.contains(*method))
+                    })
+            })
+    }
+    pub(super) fn open_missions(&mut self, outcome: &mut ClientShellInput) {
+        if !self.missions_available() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Unsupported,
+                "missions",
+                "Action unavailable",
+                "This server does not support missions.",
+            );
+            return;
+        }
+        let missions = self
+            .endpoints
+            .iter()
+            .find(|e| e.endpoint_id == self.active_endpoint_id)
+            .and_then(|e| e.organization.as_ref())
+            .map(|catalog| {
+                let mut missions = catalog
+                    .organization
+                    .missions
+                    .iter()
+                    .map(|mission| {
+                        (
+                            mission.clone(),
+                            catalog
+                                .organization
+                                .mission_assignments
+                                .iter()
+                                .filter(|a| a.mission_id == mission.id)
+                                .count(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                missions.sort_by_key(|(mission, _)| mission.order);
+                missions
+            })
+            .unwrap_or_default();
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::Missions { missions },
+            x: self.hits.workspace_body.x,
+            y: self.hits.workspace_body.y,
+            highlighted: 0,
+        }));
+    }
+    pub(super) fn open_new_mission(&mut self, outcome: &mut ClientShellInput) {
+        if !self.missions_available() {
+            outcome.repaint |= self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Unsupported,
+                "missions",
+                "Action unavailable",
+                "This server does not support missions.",
+            );
+            return;
+        }
+        let Some(endpoint) = self
+            .endpoints
+            .iter()
+            .find(|e| e.endpoint_id == self.active_endpoint_id)
+        else {
+            return;
+        };
+        let Some(snapshot) = endpoint.snapshot.as_ref() else {
+            return;
+        };
+        self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "new mission",
+            input: TextEditor::default(),
+            target: ClientRenameTarget::NewMission {
+                endpoint_id: endpoint.endpoint_id.clone(),
+                boot_id: snapshot.boot_id.clone(),
+                generation: endpoint.snapshot_generation,
+            },
+        }));
+    }
     pub(super) fn restore_organization_notice(&mut self) {
         let boot = self
             .snapshot
@@ -127,6 +258,7 @@ impl ClientShellState {
                 endpoint.organization_generation = None;
                 endpoint.pending_organization = None;
                 endpoint.organization_rows.clear();
+                endpoint.mission_labels.clear();
             }
         }
     }
@@ -260,6 +392,7 @@ impl ClientShellState {
         {
             endpoint.organization = None;
             endpoint.organization_rows.clear();
+            endpoint.mission_labels.clear();
         }
         if projection_changed {
             self.rebuild_organization_rows(endpoint_id);
@@ -280,6 +413,20 @@ impl ClientShellState {
         else {
             return;
         };
+        let mission_labels = catalog
+            .organization
+            .mission_assignments
+            .iter()
+            .filter_map(|assignment| {
+                let crate::organization::MissionTarget::Tab { tab_id } = &assignment.target;
+                let mission = catalog
+                    .organization
+                    .missions
+                    .iter()
+                    .find(|mission| mission.id == assignment.mission_id)?;
+                Some((tab_id.clone(), mission.name.as_str().to_owned()))
+            })
+            .collect();
         let empty = HashSet::new();
         let groups = self
             .collapsed_groups_for_endpoint(endpoint_id)
@@ -347,6 +494,7 @@ impl ClientShellState {
                 }
             }
         }
+        self.endpoints[index].mission_labels = mission_labels;
         self.endpoints[index].organization_rows = rows;
     }
 

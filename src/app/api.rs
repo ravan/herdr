@@ -1032,6 +1032,9 @@ impl App {
                 );
             }
             Method::SessionSnapshot(_) => return self.handle_session_snapshot(request.id),
+            Method::TabTransfer(params) => return self.handle_tab_transfer(request.id, params),
+            Method::MissionCreate(params) => return self.handle_mission_create(request.id, params),
+            Method::MissionAssign(params) => return self.handle_mission_assign(request.id, params),
             Method::OrganizationGet(_) => return self.handle_organization_get(request.id),
             Method::CollectionCreate(params) => {
                 return self.handle_collection_create(request.id, params)

@@ -21,6 +21,8 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "integration.install",
     "integration.list",
     "layout.set_split_ratio",
+    "mission.assign",
+    "mission.create",
     "organization.get",
     "pane.clear",
     "pane.close",
@@ -47,6 +49,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "tab.focus",
     "tab.move",
     "tab.rename",
+    "tab.transfer",
     "workspace.close",
     "workspace.create",
     "workspace.focus",
@@ -292,6 +295,22 @@ mod tests {
         )))
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
+        for (method, digest) in [
+            (
+                "mission.assign",
+                "b2ab19234e8418c507c796baba1b6142be63c2ff073daf6646b9fa7a3b83ec20",
+            ),
+            (
+                "mission.create",
+                "3ab9c52c67104e817d2ff86d78be93b3a092fbd509fdbc91e37d4a31d8245734",
+            ),
+            (
+                "tab.transfer",
+                "beba217013e43629a11a2247d5eef6fba36fa458b1ed8bb2bdd3fbba46dbd7d3",
+            ),
+        ] {
+            assert_eq!(actual.remove(method).as_deref(), Some(digest), "{method}");
+        }
         // Freeze additive methods separately without rewriting the published fixture.
         assert_eq!(
             actual.remove("collection.set_hibernating").as_deref(),

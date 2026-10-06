@@ -9,6 +9,23 @@ use crate::app::{App, Mode};
 use super::responses::{encode_error, encode_success};
 
 impl App {
+    pub(super) fn handle_tab_transfer(
+        &mut self,
+        id: String,
+        params: crate::api::schema::TabTransferParams,
+    ) -> String {
+        match self
+            .state
+            .transfer_tab(&params.tab_id, &params.workspace_id, params.insert_index)
+        {
+            Ok(tab_id) => {
+                self.schedule_session_save();
+                self.handle_tab_get(id, TabTarget { tab_id })
+            }
+            Err(code) => encode_error(id, code, "Cannot transfer tab"),
+        }
+    }
+
     pub(super) fn handle_tab_list(&mut self, id: String, params: TabListParams) -> String {
         let tabs = if let Some(workspace_id) = params.workspace_id {
             let Some(ws_idx) = self.parse_workspace_id(&workspace_id) else {

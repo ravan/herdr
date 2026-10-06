@@ -572,6 +572,28 @@ impl Workspace {
         Ok((self.tabs.len() - 1, terminal, runtime))
     }
 
+    /// Caller prevalidates all identity capacity and insertion bounds before detaching.
+    pub(crate) fn take_tab_for_transfer(&mut self, index: usize) -> Tab {
+        let tab = self.tabs.remove(index);
+        for pane_id in tab.layout.pane_ids() {
+            self.unregister_pane(pane_id);
+        }
+        self.adjust_active_tab_after_removal(index);
+        tab
+    }
+    pub(crate) fn insert_transferred_tab(&mut self, index: usize, mut tab: Tab) {
+        let active_root = self.tabs.get(self.active_tab).map(|tab| tab.root_pane);
+        tab.number = self.next_public_tab_number;
+        self.next_public_tab_number += 1;
+        for pane_id in tab.layout.pane_ids() {
+            self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
+        }
+        self.tabs.insert(index, tab);
+        self.active_tab = active_root
+            .and_then(|root| self.tabs.iter().position(|tab| tab.root_pane == root))
+            .unwrap_or(index);
+    }
+
     pub fn close_tab(&mut self, idx: usize) -> bool {
         if self.tabs.len() <= 1 || idx >= self.tabs.len() {
             return false;

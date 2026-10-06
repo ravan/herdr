@@ -318,6 +318,14 @@ pub(super) fn render_shell(
             buffer,
             layout.tab_bar,
             snapshot,
+            state
+                .endpoints
+                .iter()
+                .find(|endpoint| {
+                    &endpoint.endpoint_id == state.active_endpoint_id
+                        && endpoint.organization.is_some()
+                })
+                .map(|endpoint| &endpoint.mission_labels),
             config,
             state.tab_scroll,
             state.reveal_focused_tab,

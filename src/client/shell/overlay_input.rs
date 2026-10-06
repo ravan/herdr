@@ -929,6 +929,35 @@ impl ClientShellState {
         };
         let trimmed = rename.input.trim();
         let method = match rename.target {
+            ClientRenameTarget::NewMission {
+                endpoint_id,
+                boot_id,
+                generation,
+            } => {
+                let valid = endpoint_id == self.active_endpoint_id
+                    && self
+                        .endpoints
+                        .iter()
+                        .find(|e| e.endpoint_id == endpoint_id)
+                        .is_some_and(|e| {
+                            e.snapshot_generation == generation
+                                && e.snapshot
+                                    .as_ref()
+                                    .is_some_and(|snapshot| snapshot.boot_id == boot_id)
+                        });
+                if !valid {
+                    outcome.repaint |= self.push_endpoint_notice(ClientEndpointNoticeKind::Rejected,"mission.stale_form","Action unavailable","The mission form belongs to an earlier server connection. Open it again to create a mission.");
+                    return;
+                }
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::MissionCreate(
+                        crate::api::schema::MissionCreateParams {
+                            name: trimmed.to_owned(),
+                            objective: None,
+                        },
+                    )
+                })
+            }
             ClientRenameTarget::NewCollection => (!trimmed.is_empty()).then(|| {
                 crate::api::schema::Method::CollectionCreate(
                     crate::api::schema::CollectionCreateParams {

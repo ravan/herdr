@@ -1157,6 +1157,14 @@ impl AppState {
         self.organization
             .validate()
             .expect("organization catalog invariants");
+        let live = self.live_mission_targets();
+        assert!(
+            self.organization
+                .mission_assignments
+                .iter()
+                .all(|a| live.contains(&a.target)),
+            "mission assignments must refer to live public targets"
+        );
         if self.workspaces.is_empty() {
             assert!(
                 self.active.is_none(),

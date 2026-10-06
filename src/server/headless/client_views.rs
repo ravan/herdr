@@ -125,6 +125,28 @@ impl HeadlessServer {
         }
     }
 
+    /// Public identities change on transfer; clients keep their existing terminal view.
+    pub(super) fn relocate_shell_tab(&mut self, old_id: &str, new_id: &str, workspace_id: &str) {
+        for location in self
+            .clients
+            .values_mut()
+            .filter_map(|client| client.shell_location.as_mut())
+        {
+            let follows = location.focused_tab_id() == Some(old_id);
+            location.active_tab_ids.retain(|_, tab| tab != old_id);
+            if follows {
+                location.focus_tab(workspace_id.to_owned(), new_id.to_owned());
+            }
+        }
+        if self.popup_owner_tab_id.as_deref() == Some(old_id) {
+            self.popup_owner_tab_id = Some(new_id.to_owned());
+        }
+        if let Some(controller) = self.tab_geometry_controllers.remove(old_id) {
+            self.tab_geometry_controllers
+                .insert(new_id.to_owned(), controller);
+        }
+    }
+
     pub(super) fn reconcile_client_shell_locations(&mut self) {
         if self.app.state.popup_pane.is_none() {
             self.popup_owner_tab_id = None;
@@ -232,6 +254,7 @@ impl HeadlessServer {
                 | Method::PaneEditScrollback(_)
                 | Method::PaneMove(_)
                 | Method::PaneSplit(_)
+                | Method::TabTransfer(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
                 | Method::WorkspaceClose(_)
@@ -266,6 +289,7 @@ impl HeadlessServer {
                 | Method::PaneSplit(_)
                 | Method::PaneSwap(_)
                 | Method::PaneZoom(_)
+                | Method::TabTransfer(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)

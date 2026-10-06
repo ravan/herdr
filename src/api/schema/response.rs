@@ -45,6 +45,10 @@ pub enum ResponseResult {
     Organization {
         organization: crate::organization::OrganizationState,
     },
+    MissionCreated {
+        mission: crate::organization::Mission,
+        organization: crate::organization::OrganizationState,
+    },
     CollectionCreated {
         collection: crate::organization::Collection,
         organization: crate::organization::OrganizationState,

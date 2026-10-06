@@ -2431,6 +2431,58 @@
           ],
           "type": "object"
         },
+        "MissionAssignParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/schemas/request/$defs/MissionTarget"
+            }
+          },
+          "required": [
+            "target",
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionCreateParams": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "objective": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "MissionTarget": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "tab",
+                  "type": "string"
+                },
+                "tab_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "tab_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "NotificationShowParams": {
           "properties": {
             "body": {
@@ -4434,6 +4486,27 @@
           ],
           "type": "object"
         },
+        "TabTransferParams": {
+          "properties": {
+            "insert_index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tab_id",
+            "workspace_id",
+            "insert_index"
+          ],
+          "type": "object"
+        },
         "ToastHerdrPosition": {
           "enum": [
             "top-left",
@@ -5017,6 +5090,38 @@
         {
           "properties": {
             "method": {
+              "const": "mission.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.assign",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionAssignParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "collection.create",
               "type": "string"
             },
@@ -5358,6 +5463,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/TabMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "tab.transfer",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/TabTransferParams"
             }
           },
           "required": [
@@ -7994,6 +8115,71 @@
             }
           ]
         },
+        "Mission": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/schemas/success_response/$defs/MissionName"
+            },
+            "objective": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "order"
+          ],
+          "type": "object"
+        },
+        "MissionAssignment": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/schemas/success_response/$defs/MissionTarget"
+            }
+          },
+          "required": [
+            "target",
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionName": {
+          "type": "string"
+        },
+        "MissionTarget": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "tab",
+                  "type": "string"
+                },
+                "tab_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "tab_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "NotificationShowReason": {
           "enum": [
             "shown",
@@ -8016,6 +8202,20 @@
               "default": [],
               "items": {
                 "$ref": "#/schemas/success_response/$defs/FamilyAssignment"
+              },
+              "type": "array"
+            },
+            "mission_assignments": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/MissionAssignment"
+              },
+              "type": "array"
+            },
+            "missions": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/Mission"
               },
               "type": "array"
             },
@@ -9426,6 +9626,26 @@
               },
               "required": [
                 "type",
+                "organization"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "mission": {
+                  "$ref": "#/schemas/success_response/$defs/Mission"
+                },
+                "organization": {
+                  "$ref": "#/schemas/success_response/$defs/OrganizationState"
+                },
+                "type": {
+                  "const": "mission_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "mission",
                 "organization"
               ],
               "type": "object"

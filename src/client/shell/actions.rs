@@ -308,7 +308,9 @@ impl ClientShellState {
         body: impl Into<String>,
     ) -> bool {
         let code = code.into();
-        let persistent = code == "organization"
+        let persistent = code == "missions"
+            || code.starts_with("mission.")
+            || code == "organization"
             || code.starts_with("collection.")
             || code.starts_with("organization.");
         let key = ClientEndpointNoticeKey {
@@ -381,6 +383,8 @@ impl ClientShellState {
         let hibernate_advertised = !matches!(
             method,
             crate::api::schema::Method::CollectionSetHibernating(_)
+                | crate::api::schema::Method::MissionCreate(_)
+                | crate::api::schema::Method::MissionAssign(_)
         ) || self
             .endpoints
             .iter()
@@ -390,7 +394,7 @@ impl ClientShellState {
                     && endpoint
                         .methods
                         .as_ref()
-                        .is_some_and(|methods| methods.contains("collection.set_hibernating"))
+                        .is_some_and(|methods| methods.contains(method_name.as_str()))
             });
         if !hibernate_advertised || !self.supports_endpoint_method(&method) {
             outcome.repaint |= self.push_endpoint_notice(
@@ -604,6 +608,7 @@ impl ClientShellState {
                     ),
                 };
                 let notice_code = if pending.method_name.starts_with("collection.")
+                    || pending.method_name.starts_with("mission.")
                     || pending.method_name.starts_with("organization.")
                 {
                     format!("{}:{notice_code}", pending.method_name)
@@ -885,7 +890,8 @@ impl ClientShellState {
         }
         let repaint = match result {
             Ok(
-                crate::api::schema::ResponseResult::CollectionCreated { organization, .. }
+                crate::api::schema::ResponseResult::MissionCreated { organization, .. }
+                | crate::api::schema::ResponseResult::CollectionCreated { organization, .. }
                 | crate::api::schema::ResponseResult::Organization { organization },
             ) => {
                 if let Some(generation) = self.active_snapshot_generation {

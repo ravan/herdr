@@ -109,3 +109,13 @@ Use **new collection** in the menu to create a collection. Right-click a workspa
 To park a collection, right-click its header and choose **Hibernate collection**. The collection moves under **Hibernate**, which starts collapsed on a new client. Click Hibernate to expand it, then right-click a parked collection and choose **Bring collection back** to return it to the ordinary list.
 
 Parking preserves the current terminal and input target. Agents keep running and their notifications still arrive. An explicit jump to a parked agent reveals its location without bringing the collection back. The parked flag survives server restart; expansion choices belong to each client. Servers that do not advertise Hibernate keep their existing collection and terminal controls.
+
+## Missions
+
+Open **Missions…** in the menu and choose **New mission…** to name an objective. The menu lists missions and their tab counts, including empty missions. Right-click an existing tab, choose **Add to mission…**, then select a mission. A **◆** indicator and the mission name appear after the server confirms the assignment.
+
+Each tab has one explicit mission. Choosing another mission replaces its assignment without recreating terminals or changing focus. Renaming and reordering a tab preserve membership. Closing a tab removes its assignment and retains the mission, even when no tabs remain. Definitions and valid assignments survive restart and live handoff. Missions also remain available for tabs in parked collections.
+
+JSON callers can use `mission.create` with a name and optional objective, and `mission.assign` with a mission ID and a target such as `{"kind":"tab","tab_id":"w1:t1"}`. Use the current public tab ID from `tab.list`. `tab.transfer` requires `tab_id`, destination `workspace_id`, and `insert_index`; it moves the complete tab and updates its assignment to the resulting public ID. A rejected transfer preserves the original assignment. `tab.move` continues to reorder within one workspace.
+
+Servers that do not advertise mission methods retain their existing collection and terminal controls.

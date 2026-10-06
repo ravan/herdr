@@ -192,8 +192,12 @@ pub(crate) fn render_context_menu(
     let rect = Rect::new(x, y, width, height);
     let inner = panel(buffer, rect, palette.accent, palette.panel_bg)?;
     let mut rows = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let row_y = inner.y.saturating_add(index as u16);
+    let first_visible = menu
+        .highlighted
+        .saturating_add(1)
+        .saturating_sub(usize::from(inner.height));
+    for (index, item) in items.iter().enumerate().skip(first_visible) {
+        let row_y = inner.y.saturating_add((index - first_visible) as u16);
         if row_y >= inner.bottom() {
             break;
         }

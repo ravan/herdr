@@ -298,6 +298,11 @@ pub(super) enum ClientShellOverlayKind {
 #[derive(Debug)]
 pub(super) enum ClientRenameTarget {
     NewCollection,
+    NewMission {
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+    },
     NewWorkspace {
         source_workspace_id: Option<String>,
         cwd: Option<String>,
@@ -513,6 +518,10 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
+    AddToMission,
+    AssignMission(usize),
+    NewMission,
+    MissionDefinition(usize),
     SetHibernating,
     MoveFamilyToCollection,
     AssignCollection(usize),
@@ -535,6 +544,14 @@ pub(super) enum ClientContextMenuAction {
 
 #[derive(Debug)]
 pub(super) enum ClientContextMenuTarget {
+    Missions {
+        missions: Vec<(crate::organization::Mission, usize)>,
+    },
+    MissionPicker {
+        workspace: WorkspaceNavigationTarget,
+        tab_id: String,
+        missions: Vec<crate::organization::Mission>,
+    },
     Collection {
         endpoint_id: ClientEndpointId,
         boot_id: String,
@@ -558,6 +575,7 @@ pub(super) enum ClientContextMenuTarget {
     Tab {
         tab_id: String,
         workspace_id: String,
+        mission_context: Option<WorkspaceNavigationTarget>,
     },
     Pane {
         pane_id: String,

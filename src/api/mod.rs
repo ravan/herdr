@@ -22,7 +22,9 @@ pub const SOCKET_PATH_ENV_VAR: &str = "HERDR_SOCKET_PATH";
 pub(crate) fn request_changes_ui(request: &Request) -> bool {
     matches!(
         &request.method,
-        Method::CollectionSetHibernating(_)
+        Method::MissionCreate(_)
+            | Method::MissionAssign(_)
+            | Method::CollectionSetHibernating(_)
             | Method::CollectionAssignFamily(_)
             | Method::CollectionCreate(_)
             | Method::ServerReloadConfig(_)
@@ -44,6 +46,7 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
             | Method::TabCreate(_)
             | Method::TabFocus(_)
             | Method::TabRename(_)
+            | Method::TabTransfer(_)
             | Method::TabMove(_)
             | Method::TabClose(_)
             | Method::LayoutApply(_)

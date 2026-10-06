@@ -162,3 +162,55 @@ async fn mc_s2_hibernate_revision_reaches_clients_and_new_attachment_without_ter
     }
     shutdown_test_runtimes(&mut server);
 }
+
+#[tokio::test]
+async fn mc_s3_transfer_keeps_each_attached_clients_existing_terminal() {
+    let mut server = test_headless_server();
+    let mut source = crate::workspace::Workspace::test_new("source");
+    source.test_add_tab(Some("remaining"));
+    source.switch_tab(0);
+    server.app.state.workspaces =
+        vec![source, crate::workspace::Workspace::test_new("destination")];
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.ensure_test_terminals();
+    let source_id = server.app.public_tab_id(0, 0).unwrap();
+    let destination = server.app.public_workspace_id(1);
+    let destination_tab = server.app.public_tab_id(1, 0).unwrap();
+    let (first, _first_render) = connect_test_shell(&mut server, 91, 80, 24);
+    let (second, _second_render) = connect_test_shell(&mut server, 92, 80, 24);
+    let first_before = client_shell_snapshot(&first);
+    second.try_iter().for_each(drop);
+    let (tx, rx) = std::sync::mpsc::channel();
+    server.handle_client_shell_api_request(92,crate::api::ApiRequestMessage {
+        request:serde_json::from_value(serde_json::json!({"id":"focus","method":"tab.focus","params":{"tab_id":destination_tab}})).unwrap(),
+        respond_to:tx,response_write_complete:None,
+    });
+    rx.recv().unwrap();
+    server.render_and_stream();
+    let second_before = client_shell_snapshot(&second);
+    first.try_iter().for_each(drop);
+    let (tx, rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {
+        request:serde_json::from_value(serde_json::json!({"id":"transfer","method":"tab.transfer","params":{"tab_id":source_id,"workspace_id":destination,"insert_index":0}})).unwrap(),
+        respond_to:tx,response_write_complete:None,
+    });
+    let response: serde_json::Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
+    let moved = response["result"]["tab"]["tab_id"].as_str().unwrap();
+    server.render_and_stream();
+    let first_after = client_shell_snapshot(&first);
+    let second_after = client_shell_snapshot(&second);
+    assert_eq!(first_after.focused_tab_id.as_deref(), Some(moved));
+    assert_eq!(
+        first_after.focused_pane_id.as_deref(),
+        server
+            .app
+            .public_pane_id(1, server.app.state.workspaces[1].tabs[0].root_pane)
+            .as_deref()
+    );
+    assert_ne!(first_before.focused_tab_id, first_after.focused_tab_id);
+    assert_eq!(second_after.focused_tab_id, second_before.focused_tab_id);
+    assert_eq!(second_after.focused_pane_id, second_before.focused_pane_id);
+    server.app.state.assert_invariants_for_test();
+    shutdown_test_runtimes(&mut server);
+}

@@ -27,6 +27,7 @@ pub(crate) struct ClientShellEndpoint {
     pub(crate) organization_generation: Option<u64>,
     pub(crate) pending_organization:
         Option<(u64, crate::protocol::endpoint::EndpointOrganizationCatalog)>,
+    pub(super) mission_labels: HashMap<String, String>,
     pub(super) organization_rows: Vec<super::organization::CollectionRow>,
 }
 
@@ -101,6 +102,9 @@ impl ClientShellState {
                     .and_then(|endpoint| endpoint.organization_generation),
                 pending_organization: previous
                     .and_then(|endpoint| endpoint.pending_organization.clone()),
+                mission_labels: previous
+                    .map(|e| e.mission_labels.clone())
+                    .unwrap_or_default(),
                 organization_rows: previous
                     .map(|endpoint| endpoint.organization_rows.clone())
                     .unwrap_or_default(),
@@ -789,6 +793,7 @@ pub(super) fn local_endpoint() -> ClientShellEndpoint {
         organization: None,
         organization_generation: None,
         pending_organization: None,
+        mission_labels: HashMap::new(),
         organization_rows: Vec::new(),
     }
 }

@@ -2990,6 +2990,10 @@ impl HeadlessServer {
             self.app.state.view.terminal_area =
                 Rect::new(0, 0, self.effective_size.0, self.effective_size.1);
         }
+        let transferred_tab = match &msg.request.method {
+            api::schema::Method::TabTransfer(params) => Some(params.tab_id.clone()),
+            _ => None,
+        };
         let mut response = if matches!(
             &msg.request.method,
             api::schema::Method::ServerReloadConfig(_)
@@ -3016,6 +3020,15 @@ impl HeadlessServer {
             self.app
                 .handle_api_request_after_internal_events_drained(msg.request)
         };
+        if let Some(old_id) = transferred_tab {
+            if let Ok(api::schema::SuccessResponse {
+                result: api::schema::ResponseResult::TabInfo { tab },
+                ..
+            }) = serde_json::from_str(&response)
+            {
+                self.relocate_shell_tab(&old_id, &tab.tab_id, &tab.workspace_id);
+            }
+        }
         if let Some(snapshot) = frozen_alt_screen_read {
             if let Ok(mut success) = serde_json::from_str::<api::schema::SuccessResponse>(&response)
             {

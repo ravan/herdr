@@ -2,6 +2,53 @@ use super::AppState;
 use crate::organization::{Collection, CollectionId, CollectionName, FamilyId};
 
 impl AppState {
+    pub(crate) fn create_mission(
+        &mut self,
+        name: String,
+        objective: Option<String>,
+    ) -> Result<crate::organization::Mission, &'static str> {
+        let name = crate::organization::MissionName::try_from(name)?;
+        let mission = self.organization.create_mission(name, objective)?;
+        self.mark_session_dirty();
+        Ok(mission)
+    }
+    pub(crate) fn assign_mission(
+        &mut self,
+        target: crate::organization::MissionTarget,
+        mission: crate::organization::MissionId,
+    ) -> Result<(), &'static str> {
+        let live = self.live_mission_targets();
+        if self.organization.assign_mission(target, mission, &live)? {
+            self.mark_session_dirty();
+        }
+        Ok(())
+    }
+    pub(crate) fn reconcile_mission_targets(
+        &mut self,
+    ) -> Result<Vec<crate::organization::MissionTarget>, &'static str> {
+        if self.organization.mission_assignments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let live = self.live_mission_targets();
+        let removed = self.organization.retain_live_mission_targets(&live)?;
+        if !removed.is_empty() {
+            self.mark_session_dirty();
+            tracing::warn!(?removed, "removed unavailable mission targets");
+        }
+        Ok(removed)
+    }
+    pub(crate) fn live_mission_targets(&self) -> Vec<crate::organization::MissionTarget> {
+        self.workspaces
+            .iter()
+            .flat_map(|ws| {
+                ws.tabs
+                    .iter()
+                    .map(|tab| crate::organization::MissionTarget::Tab {
+                        tab_id: crate::workspace::public_tab_id_for_number(&ws.id, tab.number),
+                    })
+            })
+            .collect()
+    }
     pub(crate) fn set_workspace_worktree_membership(
         &mut self,
         workspace_id: &str,
@@ -31,6 +78,7 @@ impl AppState {
     pub(crate) fn reconcile_organization_families(
         &mut self,
     ) -> Result<Vec<FamilyId>, &'static str> {
+        self.reconcile_mission_targets()?;
         let live = self
             .workspaces
             .iter()

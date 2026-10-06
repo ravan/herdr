@@ -79,6 +79,10 @@ pub enum Method {
     SessionSnapshot(EmptyParams),
     #[serde(rename = "organization.get")]
     OrganizationGet(EmptyParams),
+    #[serde(rename = "mission.create")]
+    MissionCreate(MissionCreateParams),
+    #[serde(rename = "mission.assign")]
+    MissionAssign(MissionAssignParams),
     #[serde(rename = "collection.create")]
     CollectionCreate(CollectionCreateParams),
     #[serde(rename = "collection.assign_family")]
@@ -123,6 +127,8 @@ pub enum Method {
     TabRename(TabRenameParams),
     #[serde(rename = "tab.move")]
     TabMove(TabMoveParams),
+    #[serde(rename = "tab.transfer")]
+    TabTransfer(TabTransferParams),
     #[serde(rename = "tab.close")]
     TabClose(TabTarget),
     #[serde(rename = "agent.list")]

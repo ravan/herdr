@@ -290,3 +290,123 @@ mod hibernate_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+mod mission_tests {
+    use super::*;
+    #[tokio::test]
+    async fn mc_s3_capture_restore_resolves_public_tab_numbers_and_reports_stale_targets() {
+        let config = crate::config::Config::default();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy::TEST,
+            None,
+            rx,
+            crate::api::EventHub::default(),
+        );
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        let workspace = app.state.workspaces[0].id.clone();
+        let id = crate::workspace::public_tab_id_for_number(&workspace, 4);
+        let mission = app
+            .state
+            .create_mission("Tako platform".into(), Some("Ship".into()))
+            .unwrap();
+        app.state
+            .assign_mission(
+                crate::organization::MissionTarget::Tab { tab_id: id.clone() },
+                mission.id.clone(),
+            )
+            .unwrap();
+        let snapshot = app.capture_session_snapshot();
+        let mut raw = serde_json::to_value(&snapshot).unwrap();
+        raw["organization"]["mission_assignments"].as_array_mut().unwrap().push(serde_json::json!({"mission_id":mission.id,"target":{"kind":"tab","tab_id":format!("{workspace}:t2")}}));
+        let parsed: crate::persist::SessionSnapshot = serde_json::from_value(raw).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let (workspaces, terminals, runtimes) = crate::persist::restore(
+            &parsed,
+            None,
+            24,
+            80,
+            config.advanced.scrollback_limit_bytes,
+            &config.terminal.default_shell,
+            config.terminal.shell_mode,
+            false,
+            tx,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            std::sync::Arc::new(crate::render_signal::RenderSignal::default()),
+        );
+        app.state.workspaces = workspaces;
+        app.state.terminals = terminals;
+        app.terminal_runtimes = runtimes.into();
+        app.state.organization = parsed.organization;
+        assert_eq!(
+            app.state.reconcile_mission_targets().unwrap(),
+            vec![crate::organization::MissionTarget::Tab {
+                tab_id: format!("{workspace}:t2")
+            }]
+        );
+        assert_eq!(
+            app.state
+                .organization
+                .mission_for(&crate::organization::MissionTarget::Tab { tab_id: id }),
+            Some(&mission.id)
+        );
+        app.state.assert_invariants_for_test();
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn mc_s3_empty_mission_save_load_and_handoff_retains_definition() {
+        let root = std::env::temp_dir().join(format!("herdr-mc-s3-empty-{}", std::process::id()));
+        let path = root.join("session.json");
+        let config = crate::config::Config::default();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy {
+                persist_session: true,
+                ..crate::app::AppPolicy::TEST
+            },
+            None,
+            rx,
+            crate::api::EventHub::default(),
+        );
+        app.session_writer = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::persist::SessionWriter::at_path(path.clone(), false),
+        ));
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        let id = crate::workspace::public_tab_id_for_number(&app.state.workspaces[0].id, 4);
+        let mission = app
+            .state
+            .create_mission("Retained empty".into(), None)
+            .unwrap();
+        app.state
+            .assign_mission(
+                crate::organization::MissionTarget::Tab { tab_id: id },
+                mission.id.clone(),
+            )
+            .unwrap();
+        app.state.close_workspaces(vec![0]);
+        app.save_session_now();
+        let parsed: crate::persist::SessionSnapshot =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let restored = App::new_from_handoff(
+            &config,
+            None,
+            rx,
+            crate::api::EventHub::default(),
+            &parsed,
+            &mut std::collections::HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(restored.state.organization.missions, vec![mission]);
+        assert!(restored.state.organization.mission_assignments.is_empty());
+        assert_eq!(restored.state.organization, app.state.organization);
+        restored.state.assert_invariants_for_test();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

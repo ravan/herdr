@@ -644,6 +644,9 @@ impl AppState {
                 self.terminal_runtime_shutdowns.push(terminal_id);
             }
         }
+        if let Err(code) = self.reconcile_mission_targets() {
+            tracing::error!(code, "invalid mission state after terminal cleanup");
+        }
     }
 
     pub(crate) fn remove_plugin_pane_records(
@@ -658,6 +661,10 @@ impl AppState {
         {
             self.previous_pane_focus = None;
         }
+        self.pane_id_aliases
+            .retain(|_, pane| !pane_ids.contains(pane));
+        self.public_pane_id_aliases
+            .retain(|_, pane| !pane_ids.contains(pane));
         for pane_id in pane_ids {
             self.plugin_panes.remove(&pane_id);
         }

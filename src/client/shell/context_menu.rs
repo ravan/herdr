@@ -9,6 +9,38 @@ impl ClientContextMenuOverlay {
             action,
         };
         let mut items = match &self.target {
+            ClientContextMenuTarget::MissionPicker { missions, .. } => missions
+                .iter()
+                .enumerate()
+                .map(|(index, mission)| ClientContextMenuItem {
+                    label: format!("{} ({})", mission.name.as_str(), mission.id.0),
+                    action: Action::AssignMission(index),
+                })
+                .collect(),
+            ClientContextMenuTarget::Missions { missions } => {
+                let mut rows = vec![item("New mission…", Action::NewMission)];
+                rows.extend(
+                    missions
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (mission, count))| ClientContextMenuItem {
+                            label: format!(
+                                "{} ({}) · {} tabs{}",
+                                mission.name.as_str(),
+                                mission.id.0,
+                                count,
+                                mission
+                                    .objective
+                                    .as_ref()
+                                    .map(|objective| format!(" · {objective}"))
+                                    .unwrap_or_default()
+                            ),
+                            action: Action::MissionDefinition(index),
+                        }),
+                );
+                rows
+            }
+
             ClientContextMenuTarget::Collection { hibernating, .. } => vec![item(
                 if *hibernating {
                     "Hibernate collection"
@@ -79,6 +111,7 @@ impl ClientContextMenuOverlay {
                 item("New tab", Action::NewTab),
                 item("Rename", Action::Rename),
                 item("Close", Action::Close),
+                item("Add to mission…", Action::AddToMission),
             ],
             ClientContextMenuTarget::Pane {
                 source_pane_id,
@@ -213,6 +246,8 @@ impl ClientShellState {
             target: ClientContextMenuTarget::Tab {
                 tab_id,
                 workspace_id: tab.workspace_id.clone(),
+                mission_context: self
+                    .navigation_target(&self.active_endpoint_id, &tab.workspace_id),
             },
             x,
             y,
@@ -270,6 +305,76 @@ impl ClientShellState {
             return;
         };
         match menu.target {
+            ClientContextMenuTarget::MissionPicker {
+                workspace,
+                tab_id,
+                missions,
+            } => {
+                if let ClientContextMenuAction::AssignMission(index) = action {
+                    if let Some(mission) = missions.get(index) {
+                        let valid = self.navigation_target_valid(&workspace)
+                            && workspace.endpoint_id == self.active_endpoint_id
+                            && self.snapshot.as_ref().is_some_and(|snapshot| {
+                                snapshot.tabs.iter().any(|tab| {
+                                    tab.tab_id == tab_id
+                                        && tab.workspace_id == workspace.workspace_id
+                                })
+                            })
+                            && self
+                                .endpoints
+                                .iter()
+                                .find(|e| e.endpoint_id == workspace.endpoint_id)
+                                .and_then(|e| e.organization.as_ref())
+                                .is_some_and(|catalog| {
+                                    catalog
+                                        .organization
+                                        .missions
+                                        .iter()
+                                        .any(|m| m.id == mission.id)
+                                });
+                        if valid {
+                            self.push_endpoint_method(
+                                crate::api::schema::Method::MissionAssign(
+                                    crate::api::schema::MissionAssignParams {
+                                        target: crate::organization::MissionTarget::Tab { tab_id },
+                                        mission_id: mission.id.clone(),
+                                    },
+                                ),
+                                outcome,
+                            );
+                        } else {
+                            outcome.repaint |= self.push_endpoint_notice(
+                                ClientEndpointNoticeKind::Rejected,
+                                "mission.stale",
+                                "Mission target unavailable",
+                                "The selected tab or mission is no longer available.",
+                            );
+                        }
+                    }
+                }
+            }
+
+            ClientContextMenuTarget::Missions { missions } => {
+                match action {
+                    ClientContextMenuAction::NewMission => self.open_new_mission(outcome),
+                    ClientContextMenuAction::MissionDefinition(index) => {
+                        if let Some((mission, count)) = missions.get(index) {
+                            // Definitions are inspectable before member navigation is introduced.
+                            self.overlay =
+                                Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+                                    target: ClientContextMenuTarget::Missions {
+                                        missions: vec![(mission.clone(), *count)],
+                                    },
+                                    x: menu.x,
+                                    y: menu.y,
+                                    highlighted: 1,
+                                }));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             ClientContextMenuTarget::Collection {
                 endpoint_id,
                 boot_id,
@@ -354,7 +459,26 @@ impl ClientShellState {
             ClientContextMenuTarget::Tab {
                 tab_id,
                 workspace_id,
-            } => self.activate_tab_context_action(tab_id, workspace_id, action, outcome),
+                mission_context,
+            } => {
+                if action == ClientContextMenuAction::AddToMission {
+                    if let Some(workspace) = mission_context.filter(|context| {
+                        self.navigation_target_valid(context)
+                            && context.endpoint_id == self.active_endpoint_id
+                    }) {
+                        self.open_mission_picker(tab_id, workspace, outcome);
+                    } else {
+                        outcome.repaint |= self.push_endpoint_notice(
+                            ClientEndpointNoticeKind::Rejected,
+                            "mission.stale",
+                            "Mission target unavailable",
+                            "The selected tab is no longer available.",
+                        );
+                    }
+                } else {
+                    self.activate_tab_context_action(tab_id, workspace_id, action, outcome);
+                }
+            }
             ClientContextMenuTarget::Pane {
                 pane_id,
                 workspace_id,
