@@ -131,6 +131,10 @@ Servers that do not advertise mission methods retain their existing collection a
 
 Choose **Mission control** in the menu or press `ctrl+b m` to open **Spaces**. Configure another binding with `keys.mission_control`, using the same syntax as other actions.
 
+Click **Spaces**, **Missions**, or **Needs you**, or use Tab and Shift+Tab to switch views. **Missions** lists empty missions, explicitly assigned tabs, and their effective pane members. A pane override takes precedence over its tab's mission; each pane appears once. Rows show their location, membership source, public ID, and **Hibernate** marker. Right-click an existing tab or pane row to use the mission assignment dialog. Each assignment action depends on its own server capability and updates after confirmation.
+
+**Needs you** lists agents that Herdr currently reports as blocked, including agents in parked collections. Select a row to jump to its original terminal and reply there. The row leaves the queue when Herdr observes the state change. If a selected member leaves its mission or an agent stops being blocked, Enter shows a notice until you explicitly select a current row. Editing search or switching views cannot redirect that stale action.
+
 Search workspace and tab names, branches, actual locations, collection names, mission assignments, and available pane or agent labels. Search includes parked targets marked **Hibernate**, even when their collection or family is collapsed. Click collection, family, or Hibernate headings to expand or collapse this overview. These choices belong to the client.
 
 Use the arrow keys or Page Up/Page Down to select, Enter or a row click to jump, and the wheel or scrollbar to scroll. Narrow terminals use compact rows. Each result identifies an existing workspace, tab, or pane. A jump reveals a parked location without bringing its collection back. A closed or disconnected target shows a persistent local notice; it does not redirect to another target with the same name.

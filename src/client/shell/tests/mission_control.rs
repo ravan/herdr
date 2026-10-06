@@ -1,5 +1,332 @@
 use super::*;
 
+#[test]
+fn mc_s6_search_selects_matching_members_from_headings_and_updates_compact_hits_in_one_batch() {
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t");
+    let unavailable = state.handle_input_bytes(b"\r");
+    assert!(
+        unavailable.actions.is_empty() && unavailable.requests.is_empty(),
+        "a Spaces workspace capture cannot focus while absent from Missions"
+    );
+    // The first arrow explicitly selects the first member from a view capture;
+    // the second selects its mission heading before searching.
+    state.handle_input_bytes(b"\x1b[A\x1b[A");
+    state.compose(50, 14).unwrap();
+    state.handle_input_bytes(b"Editor sibling");
+    let frame = state.compose(50, 14).unwrap();
+    assert!(frame_rows(&frame)
+        .iter()
+        .any(|row| row.contains("pane_2") && row.contains("Hibernate")));
+    let input = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &input.actions[..] else {
+        panic!("search chooses matching current pane rather than heading/hidden target");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"pane.focus","params":{"pane_id":"pane_2"}})
+    );
+
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\tworker");
+    state.compose(50, 14).unwrap();
+    // Edit the query and click the newly filtered pane row in one input batch.
+    let frame = state.compose(50, 14).unwrap();
+    let y = frame_rows(&frame)
+        .iter()
+        .position(|row| row.contains("pane_1"))
+        .unwrap() as u16;
+    let rect = state
+        .hits
+        .mission_control_rows
+        .iter()
+        .find(|(rect, _)| rect.y == y)
+        .unwrap()
+        .0;
+    let input = state.handle_raw_events(vec![
+        RawInputEvent::Text(crate::input::TextCommit::new(" runtime")),
+        RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        }),
+    ]);
+    let [ClientShellAction::Endpoint { request, .. }] = &input.actions[..] else {
+        panic!("mouse uses current filtered geometry");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"pane.focus","params":{"pane_id":"pane_2"}})
+    );
+}
+
+#[test]
+fn mc_s6_member_assignment_reuses_exact_dialogs_with_independent_methods_and_confirmed_state() {
+    for (target, method) in [
+        ("tab_1", "mission.assign"),
+        ("pane_1", "mission.assign_pane"),
+    ] {
+        let mut state = mission_members_client();
+        state.set_endpoint_methods(Some(vec![
+            "organization.get".into(),
+            method.into(),
+            "pane.focus".into(),
+            "tab.focus".into(),
+        ]));
+        let before = state.endpoints[0].organization.clone();
+        open(&mut state, 140, 40);
+        state.handle_input_bytes(b"\t");
+        let frame = state.compose(140, 40).unwrap();
+        let y = frame_rows(&frame)
+            .iter()
+            .position(|row| row.contains(target))
+            .unwrap() as u16;
+        let rect = state
+            .hits
+            .mission_control_rows
+            .iter()
+            .find(|(rect, _)| rect.y == y)
+            .unwrap()
+            .0;
+        let input = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        })]);
+        assert!(input.actions.is_empty() && input.requests.is_empty());
+        assert!(
+            matches!(state.overlay, Some(ClientShellOverlay::ContextMenu(_))),
+            "supported assignment opens existing picker without requiring other mission methods"
+        );
+        let input = state.handle_input_bytes(b"\r");
+        let [ClientShellAction::Endpoint { request, .. }] = &input.actions[..] else {
+            panic!("assignment travels through public method");
+        };
+        let request = serde_json::to_value(&request.method).unwrap();
+        assert_eq!(request["method"], method);
+        if target == "tab_1" {
+            assert_eq!(request["params"]["target"]["tab_id"], target);
+        } else {
+            assert_eq!(request["params"]["pane_id"], target);
+        }
+        assert_eq!(
+            state.endpoints[0].organization, before,
+            "assignment waits for confirmed catalog"
+        );
+    }
+}
+
+#[test]
+fn mc_s6_removed_membership_and_blocked_exit_keep_stale_actions_across_search_and_views() {
+    for needs_you in [false, true] {
+        let mut state = mission_members_client();
+        if needs_you {
+            let mut snap = state.snapshot.as_deref().unwrap().clone();
+            snap.agents[0].agent_status = AgentStatus::Blocked;
+            snap.revision += 1;
+            state.cache_endpoint_snapshot_for_generation(
+                &ClientEndpointId::Local,
+                1,
+                Box::new(snap),
+            );
+            state.activate_endpoint_projection(&ClientEndpointId::Local);
+            let mut frame = surface();
+            frame.projection_revision = 3;
+            frame.surface_revision = 3;
+            state.set_pane_surface(frame);
+        }
+        open(&mut state, 140, 40);
+        state.handle_input_bytes(if needs_you { b"\t\t" } else { b"\t" });
+        state.handle_input_bytes(b"worker");
+        if needs_you {
+            let mut snap = state.snapshot.as_deref().unwrap().clone();
+            snap.agents[0].agent_status = AgentStatus::Working;
+            snap.revision += 1;
+            state.cache_endpoint_snapshot_for_generation(
+                &ClientEndpointId::Local,
+                1,
+                Box::new(snap),
+            );
+            state.activate_endpoint_projection(&ClientEndpointId::Local);
+        } else {
+            let mut catalog = state.endpoints[0].organization.clone().unwrap();
+            catalog.organization.pane_mission_assignments.clear();
+            catalog.organization.revision += 1;
+            state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+        }
+        for bytes in [b"\r".as_slice(), b"\x7f\r", b"\t\r", b"\t\r", b"\t\r"] {
+            let input = state.handle_input_bytes(bytes);
+            assert!(
+                input.actions.is_empty() && input.requests.is_empty(),
+                "state transition or view switch must not revive stale capture"
+            );
+            assert!(matches!(
+                state.overlay,
+                Some(ClientShellOverlay::MissionControl(_))
+            ));
+            assert!(state.visible_endpoint_notice.is_some());
+        }
+        // Reselecting a current row is an explicit choice and can navigate.
+        state.handle_input_bytes(if needs_you { b"\t\t" } else { b"\x1b[Z" });
+        state.handle_input_bytes(b"\x1b[B");
+        let input = state.handle_input_bytes(b"\r");
+        assert!(!input.actions.is_empty());
+    }
+}
+
+#[test]
+fn mc_s6_needs_you_uses_authoritative_blocked_agents_including_parked_outside_custom_view() {
+    let mut state = mission_members_client();
+    let mut snap = state.snapshot.as_deref().unwrap().clone();
+    snap.agents[0].agent_status = AgentStatus::Blocked;
+    snap.agents[0].display_agent = Some("Approval worker".into());
+    snap.agents[0].state_labels = vec![("blocked".into(), "Awaiting approval".into())];
+    snap.agent_view_label = Some("Other agents".into());
+    snap.agent_order.clear();
+    snap.revision += 1;
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snap));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut frame = surface();
+    frame.projection_revision = 3;
+    frame.surface_revision = 3;
+    state.set_pane_surface(frame);
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t\t");
+    let frame = state.compose(140, 40).unwrap();
+    let text = frame_rows(&frame).join("\n");
+    assert!(text.contains("Approval worker") && text.contains("Awaiting approval"));
+    assert!(text.contains("Hibernate") && text.contains("pane_1"));
+    assert!(!text.contains("Editor sibling") && !text.contains("pane_2"));
+    state.handle_input_bytes(b"\x1b[B");
+    let input = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &input.actions[..] else {
+        panic!("exact blocked jump");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"pane.focus","params":{"pane_id":"pane_1"}})
+    );
+    assert!(
+        state.endpoints[0]
+            .organization
+            .as_ref()
+            .unwrap()
+            .organization
+            .collections[1]
+            .hibernating
+    );
+}
+
+fn mission_members_client() -> ClientShellState {
+    let mut state = parked_client();
+    let mut snap = state.snapshot.as_deref().unwrap().clone();
+    let mut pane = snap.panes[0].clone();
+    pane.pane_id = "pane_2".into();
+    pane.label = Some("Editor sibling".into());
+    pane.focused = false;
+    snap.panes.push(pane);
+    snap.revision += 1;
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snap));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 2;
+    state.set_pane_surface(frame);
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog
+        .organization
+        .missions
+        .push(crate::organization::Mission {
+            id: crate::organization::MissionId("runtime".into()),
+            name: "Agent runtime".to_owned().try_into().unwrap(),
+            objective: Some("Keep runtime healthy".into()),
+            order: 1,
+        });
+    catalog
+        .organization
+        .missions
+        .push(crate::organization::Mission {
+            id: crate::organization::MissionId("empty".into()),
+            name: "Empty objective".to_owned().try_into().unwrap(),
+            objective: None,
+            order: 2,
+        });
+    catalog.organization.mission_assignments[0].mission_id =
+        crate::organization::MissionId("runtime".into());
+    catalog.organization.pane_mission_assignments.push(
+        crate::organization::PaneMissionAssignment {
+            pane_id: "pane_1".into(),
+            mission_id: crate::organization::MissionId("platform".into()),
+        },
+    );
+    catalog.organization.revision += 1;
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    state
+}
+
+#[test]
+fn mc_s6_missions_show_empty_definitions_explicit_tabs_and_effective_panes_once() {
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t");
+    let frame = state.compose(140, 40).unwrap();
+    let text = frame_rows(&frame).join("\n");
+    assert!(
+        text.contains("Tako platform")
+            && text.contains("Agent runtime")
+            && text.contains("Empty objective")
+    );
+    assert!(text.contains("Keep runtime healthy"));
+    assert_eq!(text.matches("pane_1").count(), 1);
+    assert_eq!(text.matches("pane_2").count(), 1);
+    assert!(text.contains("tab_1") && text.contains("explicit") && text.contains("inherited"));
+    assert!(text.contains("Hibernate") && text.contains("/repo/worktrees/feature"));
+    state.handle_input_bytes(b"worker Tako");
+    state.handle_input_bytes(b"\x1b[B");
+    let input = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &input.actions[..] else {
+        panic!("exact member jump");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"pane.focus","params":{"pane_id":"pane_1"}})
+    );
+}
+
+#[test]
+fn mc_s6_view_switches_own_input_and_mouse_without_changing_terminal_context() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let before = serde_json::to_value(state.snapshot.as_ref()).unwrap();
+    state.compose(50, 14).unwrap();
+    state.handle_input_bytes(b"\x02m");
+    let input = state.handle_input_bytes(b"\t");
+    assert!(input.actions.is_empty() && input.requests.is_empty() && !input.resize);
+    let frame = state.compose(50, 14).unwrap();
+    let rows = frame_rows(&frame);
+    assert!(rows.iter().any(|r| r.contains("Missions")));
+    assert!(rows.iter().any(|r| r.contains("Needs you")));
+    assert!(rows.iter().any(|r| r.contains("No missions")));
+    let y = rows.iter().position(|r| r.contains("Needs you")).unwrap() as u16;
+    let x = rows[y as usize].find("Needs you").unwrap() as u16;
+    let result = click(&mut state, Rect::new(x, y, 1, 1));
+    assert!(result.actions.is_empty() && result.requests.is_empty());
+    let frame = state.compose(50, 14).unwrap();
+    assert!(frame_rows(&frame)
+        .iter()
+        .any(|r| r.contains("No agents need you")));
+    state.handle_input_bytes(b"\x1b");
+    assert_eq!(
+        serde_json::to_value(state.snapshot.as_ref()).unwrap(),
+        before
+    );
+}
+
 fn click(state: &mut ClientShellState, rect: Rect) -> ClientShellInput {
     state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),

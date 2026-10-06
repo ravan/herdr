@@ -53,7 +53,7 @@ impl ClientShellState {
         workspace: WorkspaceNavigationTarget,
         outcome: &mut ClientShellInput,
     ) {
-        if !self.missions_available() {
+        if !self.tab_mission_assignment_available() {
             outcome.repaint |= self.push_endpoint_notice(
                 ClientEndpointNoticeKind::Unsupported,
                 "missions",
@@ -100,6 +100,18 @@ impl ClientShellState {
                         ["organization.get", "mission.create", "mission.assign"]
                             .iter()
                             .all(|method| methods.contains(*method))
+                    })
+            })
+    }
+
+    pub(super) fn tab_mission_assignment_available(&self) -> bool {
+        self.endpoints
+            .iter()
+            .find(|e| e.endpoint_id == self.active_endpoint_id)
+            .is_some_and(|e| {
+                e.organization_supported
+                    && e.methods.as_ref().is_some_and(|m| {
+                        m.contains("organization.get") && m.contains("mission.assign")
                     })
             })
     }

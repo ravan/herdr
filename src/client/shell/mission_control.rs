@@ -1,5 +1,32 @@
 use super::*;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+mod members;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum MissionControlView {
+    #[default]
+    Spaces,
+    Missions,
+    NeedsYou,
+}
+
+impl MissionControlView {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Spaces => "Spaces",
+            Self::Missions => "Missions",
+            Self::NeedsYou => "Needs you",
+        }
+    }
+
+    fn next(self, backwards: bool) -> Self {
+        match (self, backwards) {
+            (Self::Spaces, false) | (Self::NeedsYou, true) => Self::Missions,
+            (Self::Missions, false) | (Self::Spaces, true) => Self::NeedsYou,
+            _ => Self::Spaces,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SpaceTarget {
@@ -7,6 +34,14 @@ pub(super) struct SpaceTarget {
     boot_id: String,
     generation: Option<u64>,
     focus: ClientEndpointFocusTarget,
+    applicability: TargetApplicability,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TargetApplicability {
+    Spaces,
+    Mission(crate::organization::MissionId),
+    NeedsYou,
 }
 
 impl SpaceTarget {
@@ -39,6 +74,7 @@ pub(super) enum SpaceSelection {
     Collection(crate::organization::CollectionId),
     Hibernate,
     Family(String),
+    Mission(crate::organization::MissionId),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -52,12 +88,14 @@ struct ProjectionStamp {
 /// Client presentation only. Shared membership remains in OrganizationState.
 #[derive(Debug)]
 pub(super) struct MissionControl {
+    pub(super) view: MissionControlView,
     pub(super) query: TextEditor,
     endpoint_id: ClientEndpointId,
     stamp: Option<ProjectionStamp>,
     all_rows: Vec<SpaceRow>,
     pub(super) rows: Vec<SpaceRow>,
     pub(super) selected: Option<SpaceSelection>,
+    selection_stale: bool,
     collapsed: HashSet<crate::organization::CollectionId>,
     hibernate_expanded: bool,
     collapsed_families: HashSet<String>,
@@ -74,6 +112,55 @@ impl MissionControl {
         let query = self.query.as_str().to_lowercase();
         let terms = query.split_whitespace().collect::<Vec<_>>();
         let matches_query = |row: &SpaceRow| terms.iter().all(|term| row.search.contains(term));
+        if self.view != MissionControlView::Spaces {
+            let matching_missions = self
+                .all_rows
+                .iter()
+                .filter(|row| matches_query(row))
+                .filter_map(|row| match &row.selection {
+                    Some(SpaceSelection::Target(SpaceTarget {
+                        applicability: TargetApplicability::Mission(id),
+                        ..
+                    })) => Some(id.clone()),
+                    Some(SpaceSelection::Mission(id)) => Some(id.clone()),
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            self.rows = self
+                .all_rows
+                .iter()
+                .filter(|row| {
+                    terms.is_empty()
+                        || match &row.selection {
+                            Some(SpaceSelection::Mission(id)) => matching_missions.contains(id),
+                            _ => matches_query(row),
+                        }
+                })
+                .cloned()
+                .collect();
+            if !self.selection_stale
+                && (self.selected.is_none()
+                    || (query_changed
+                        && (!matches!(self.selected, Some(SpaceSelection::Target(_)))
+                            || !self
+                                .rows
+                                .iter()
+                                .any(|row| row.selection.as_ref() == self.selected.as_ref()))))
+            {
+                self.selected = self
+                    .rows
+                    .iter()
+                    .find(|row| matches!(row.selection, Some(SpaceSelection::Target(_))))
+                    .or_else(|| self.rows.iter().find(|row| row.selection.is_some()))
+                    .and_then(|row| row.selection.clone());
+            }
+            if query_changed {
+                self.scroll = 0;
+                self.reveal_selected = true;
+                self.input_projection_dirty = true;
+            }
+            return;
+        }
         let sections = self
             .all_rows
             .iter()
@@ -230,11 +317,13 @@ impl ClientShellState {
         self.overlay = Some(ClientShellOverlay::MissionControl(Box::new(
             MissionControl {
                 query: TextEditor::default(),
+                view: MissionControlView::Spaces,
                 endpoint_id: self.active_endpoint_id.clone(),
                 stamp: None,
                 all_rows: Vec::new(),
                 rows: Vec::new(),
                 selected: None,
+                selection_stale: false,
                 scroll: 0,
                 collapsed: HashSet::new(),
                 hibernate_expanded: false,
@@ -278,7 +367,14 @@ impl ClientShellState {
         if control.stamp.as_ref() == Some(&stamp) {
             return;
         }
-        let rows = project_spaces(endpoint);
+        if let Some(SpaceSelection::Target(target)) = control.selected.as_ref() {
+            control.selection_stale |= !members::target_applicable(endpoint, target);
+        }
+        let rows = match control.view {
+            MissionControlView::Spaces => project_spaces(endpoint),
+            MissionControlView::Missions => members::project_missions(endpoint),
+            MissionControlView::NeedsYou => members::project_needs_you(endpoint),
+        };
         control.all_rows = rows;
         control.stamp = Some(stamp);
         control.filter(false);
@@ -310,6 +406,10 @@ impl ClientShellState {
         }
         if key.code == KeyCode::Esc {
             self.overlay = None;
+        } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            if let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_ref() {
+                self.switch_mission_control_view(control.view.next(key.code == KeyCode::BackTab));
+            }
         } else if key.code == KeyCode::Enter {
             self.accept_space_target(outcome);
         } else if let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_mut() {
@@ -340,6 +440,7 @@ impl ClientShellState {
                         .min(choices.len().saturating_sub(1));
                     if let Some(choice) = choices.get(next) {
                         control.selected = Some((*choice).clone());
+                        control.selection_stale = false;
                     }
                     control.reveal_selected = true;
                     control.input_projection_dirty = true;
@@ -406,7 +507,40 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         let point = (mouse.column, mouse.row);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let selected_view = self.overlay.as_ref().and_then(|overlay| match overlay {
+                ClientShellOverlay::MissionControl(control) => control
+                    .geometry
+                    .view_tabs()
+                    .into_iter()
+                    .find(|(rect, _)| contains(*rect, point))
+                    .map(|(_, view)| view),
+                _ => None,
+            });
+            if let Some(view) = selected_view {
+                self.switch_mission_control_view(view);
+                outcome.repaint = true;
+                return;
+            }
+        }
         match mouse.kind {
+            MouseEventKind::Down(MouseButton::Right) => {
+                if let Some((_, selection)) = self
+                    .hits
+                    .mission_control_rows
+                    .iter()
+                    .find(|(rect, _)| contains(*rect, point))
+                    .cloned()
+                {
+                    if let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_mut()
+                    {
+                        control.selected = Some(selection);
+                        control.selection_stale = false;
+                    }
+                    self.assign_mission_control_target(outcome);
+                    outcome.repaint = true;
+                }
+            }
             MouseEventKind::Down(MouseButton::Left)
                 if contains(self.hits.overlay_cancel, point) =>
             {
@@ -424,6 +558,7 @@ impl ClientShellState {
                     if let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_mut()
                     {
                         control.selected = Some(selection);
+                        control.selection_stale = false;
                     }
                     self.accept_space_target(outcome);
                     outcome.repaint = true;
@@ -509,6 +644,97 @@ impl ClientShellState {
         );
     }
 
+    fn switch_mission_control_view(&mut self, view: MissionControlView) {
+        let previous = self.overlay.as_ref().and_then(|overlay| match overlay {
+            ClientShellOverlay::MissionControl(control) if !control.selection_stale => {
+                match &control.selected {
+                    Some(SpaceSelection::Target(target)) => Some(target.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        });
+        if let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_mut() {
+            control.view = view;
+            control.stamp = None;
+            control.scroll = 0;
+            control.reveal_selected = true;
+            control.input_projection_dirty = true;
+        }
+        self.refresh_mission_control();
+        if let (Some(previous), Some(ClientShellOverlay::MissionControl(control))) =
+            (previous, self.overlay.as_mut())
+        {
+            if !control.selection_stale {
+                if let Some(selection) = control
+                    .all_rows
+                    .iter()
+                    .find_map(|row| match &row.selection {
+                        Some(SpaceSelection::Target(current))
+                            if current.endpoint_id == previous.endpoint_id
+                                && current.boot_id == previous.boot_id
+                                && current.generation == previous.generation
+                                && current.focus == previous.focus =>
+                        {
+                            Some(row.selection.clone())
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                {
+                    control.selected = Some(selection);
+                }
+            }
+        }
+        self.sync_mission_control_input_projection();
+    }
+
+    fn assign_mission_control_target(&mut self, outcome: &mut ClientShellInput) {
+        self.refresh_mission_control();
+        let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_ref() else {
+            return;
+        };
+        let Some(SpaceSelection::Target(target)) = control.selected.clone() else {
+            return;
+        };
+        let endpoint = self
+            .endpoints
+            .iter()
+            .find(|e| e.endpoint_id == target.endpoint_id);
+        let valid = !control.selection_stale
+            && target.endpoint_id == self.active_endpoint_id
+            && endpoint.is_some_and(|e| {
+                e.status == ClientEndpointStatus::Online && members::target_applicable(e, &target)
+            })
+            && control
+                .all_rows
+                .iter()
+                .any(|row| row.selection.as_ref() == Some(&SpaceSelection::Target(target.clone())));
+        if !valid {
+            self.space_target_notice("The selected member or connection is no longer available. Select a current member to assign.", outcome);
+            return;
+        }
+        match target.focus {
+            ClientEndpointFocusTarget::Tab(tab_id) => {
+                let workspace_id = endpoint
+                    .and_then(|e| e.snapshot.as_ref())
+                    .and_then(|s| s.tabs.iter().find(|t| t.tab_id == tab_id))
+                    .map(|t| t.workspace_id.clone());
+                if let Some(workspace) =
+                    workspace_id.and_then(|id| self.navigation_target(&target.endpoint_id, &id))
+                {
+                    self.open_mission_picker(tab_id, workspace, outcome);
+                }
+            }
+            ClientEndpointFocusTarget::Pane(pane_id) => {
+                if let Some(context) = self.pane_mission_context(&pane_id) {
+                    self.open_pane_mission_picker(context, outcome);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn accept_space_target(&mut self, outcome: &mut ClientShellInput) {
         let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_ref() else {
             return;
@@ -518,12 +744,18 @@ impl ClientShellState {
         };
         match selection {
             SpaceSelection::Target(target) => {
+                let applicable = !control.selection_stale
+                    && control.all_rows.iter().any(|row| {
+                        row.selection.as_ref() == Some(&SpaceSelection::Target(target.clone()))
+                    });
                 let current = self
                     .endpoints
                     .iter()
                     .find(|e| e.endpoint_id == target.endpoint_id);
                 let valid = current.is_some_and(|endpoint| {
-                    endpoint.status == ClientEndpointStatus::Online
+                    applicable
+                        && members::target_applicable(endpoint, &target)
+                        && endpoint.status == ClientEndpointStatus::Online
                         && endpoint.snapshot_generation == target.generation
                         && endpoint.snapshot.as_deref().is_some_and(|snapshot| {
                             snapshot.boot_id == target.boot_id
@@ -586,6 +818,7 @@ impl ClientShellState {
                             }
                         }
                         SpaceSelection::Target(_) => {}
+                        SpaceSelection::Mission(_) => {}
                     }
                     control.filter(false);
                     control.input_projection_dirty = true;
@@ -610,6 +843,7 @@ fn project_spaces(endpoint: &ClientShellEndpoint) -> Vec<SpaceRow> {
             boot_id: snapshot.boot_id.clone(),
             generation: endpoint.snapshot_generation,
             focus,
+            applicability: TargetApplicability::Spaces,
         }))
     };
     let mut tabs = HashMap::<&str, Vec<&crate::protocol::ClientShellTab>>::new();
@@ -839,6 +1073,25 @@ pub(super) struct SpaceGeometry {
 }
 
 impl SpaceGeometry {
+    pub(super) fn view_tabs(self) -> [(Rect, MissionControlView); 3] {
+        let y = self.header.y.saturating_add(1);
+        let area = Rect::new(self.header.x, y, self.header.width, 1).intersection(self.area);
+        [
+            (
+                Rect::new(area.x, y, 8, 1).intersection(area),
+                MissionControlView::Spaces,
+            ),
+            (
+                Rect::new(area.x.saturating_add(9), y, 10, 1).intersection(area),
+                MissionControlView::Missions,
+            ),
+            (
+                Rect::new(area.x.saturating_add(20), y, 11, 1).intersection(area),
+                MissionControlView::NeedsYou,
+            ),
+        ]
+    }
+
     fn new(cols: u16, rows: u16, row_count: usize) -> Self {
         let width = if cols < 60 {
             cols

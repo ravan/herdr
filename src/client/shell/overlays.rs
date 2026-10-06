@@ -1358,14 +1358,20 @@ fn render_mission_control(
         style.bg(palette.accent).fg(contrast(palette)),
     );
     if geometry.header.height > 0 && geometry.header.y + 1 < area.bottom().saturating_sub(1) {
-        put_text(
-            buffer,
-            geometry.header.x,
-            geometry.header.y + 1,
-            geometry.header.width,
-            "Spaces",
-            style.fg(palette.accent).add_modifier(Modifier::BOLD),
-        );
+        for (rect, view) in geometry.view_tabs() {
+            put_text(
+                buffer,
+                rect.x,
+                rect.y,
+                rect.width,
+                view.label(),
+                if control.view == view {
+                    style.fg(palette.accent).add_modifier(Modifier::BOLD)
+                } else {
+                    style.fg(palette.overlay0)
+                },
+            );
+        }
     }
     let search = Rect::new(
         geometry.search.x.saturating_add(2),
@@ -1383,6 +1389,21 @@ fn render_mission_control(
     );
     let cursor = text_editor::render(buffer, search, &control.query, style);
     let body = geometry.body;
+    if control.rows.is_empty() {
+        let message = match control.view {
+            super::super::mission_control::MissionControlView::Spaces => "No matching spaces",
+            super::super::mission_control::MissionControlView::Missions => "No missions",
+            super::super::mission_control::MissionControlView::NeedsYou => "No agents need you",
+        };
+        put_text(
+            buffer,
+            body.x,
+            body.y,
+            body.width,
+            message,
+            style.fg(palette.overlay0),
+        );
+    }
     for (index, row) in control
         .rows
         .iter()
@@ -1467,7 +1488,7 @@ fn render_mission_control(
         .error
         .as_ref()
         .map(|error| format!("Target unavailable: {error}"))
-        .unwrap_or_else(|| "↑↓ select · enter jump · wheel scroll".into());
+        .unwrap_or_else(|| "↑↓ select · enter jump · tab view · right-click assign".into());
     put_text(
         buffer,
         geometry.footer.x,
