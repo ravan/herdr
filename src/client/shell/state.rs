@@ -951,9 +951,11 @@ pub(super) struct ClientCopyModeState {
 }
 
 pub(crate) struct ClientShellState {
+    #[cfg(test)]
+    pub(super) mission_control_projection_work: usize,
     pub(super) machine_diagnostics: super::machine_diagnostics::MachineDiagnostics,
     pub(super) config: ClientShellConfig,
-    pub(super) snapshot: Option<Box<ClientShellSnapshot>>,
+    pub(super) snapshot: Option<Arc<ClientShellSnapshot>>,
     pub(super) active_snapshot_generation: Option<u64>,
     pub(super) pane_surface_generation: Option<u64>,
     pub(super) pane_surface: Option<PaneSurfaceFrame>,
@@ -1125,6 +1127,8 @@ impl ClientShellState {
             initial_endpoint.session_name = session;
         }
         Self {
+            #[cfg(test)]
+            mission_control_projection_work: 0,
             machine_diagnostics: Default::default(),
             config,
             snapshot: None,
@@ -1434,12 +1438,9 @@ impl ClientShellState {
 
     pub(super) fn apply_active_snapshot(
         &mut self,
-        mut snapshot: Box<ClientShellSnapshot>,
+        snapshot: Arc<ClientShellSnapshot>,
         generation: Option<u64>,
     ) {
-        snapshot
-            .commands
-            .retain(|command| command.action != crate::protocol::ClientShellCommandAction::Unknown);
         let graphics_scope = match &self.active_endpoint_id {
             // Local direct uploads use image IDs authored by the server from its boot ID.
             ClientEndpointId::Local => snapshot.boot_id.clone(),

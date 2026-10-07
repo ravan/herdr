@@ -15,7 +15,7 @@ pub(crate) struct ClientShellEndpoint {
     /// Client connection metadata; catalogs and public target IDs are session scoped.
     pub(crate) session_name: String,
     pub(crate) status: ClientEndpointStatus,
-    pub(crate) snapshot: Option<Box<ClientShellSnapshot>>,
+    pub(crate) snapshot: Option<Arc<ClientShellSnapshot>>,
     /// Connection generation that produced `snapshot`. `None` is reserved for local tests.
     pub(crate) snapshot_generation: Option<u64>,
     pub(crate) agent_recency: HashMap<String, u64>,
@@ -685,7 +685,7 @@ impl ClientShellState {
         let endpoint = &mut self.endpoints[index];
         endpoint.agent_recency = recency;
         endpoint.snapshot_generation = generation;
-        endpoint.snapshot = Some(snapshot);
+        endpoint.snapshot = Some(Arc::from(snapshot));
         let pending_matches =
             endpoint
                 .pending_agent_view_projection
@@ -728,12 +728,24 @@ impl ClientShellState {
         };
         let changed = {
             let endpoint = &mut self.endpoints[index];
-            let Some(snapshot) = endpoint.snapshot.as_deref_mut() else {
+            let Some(snapshot) = endpoint.snapshot.as_mut() else {
                 return false;
             };
-            endpoint
-                .agent_presentation
-                .acknowledge_surface(snapshot, surface, self.outer_focused)
+            let changed = endpoint.agent_presentation.acknowledge_surface_watermark(
+                snapshot,
+                surface,
+                self.outer_focused,
+            );
+            if changed
+                && endpoint
+                    .agent_presentation
+                    .acknowledged_status_changed(snapshot)
+            {
+                endpoint
+                    .agent_presentation
+                    .apply_acknowledged_status(Arc::make_mut(snapshot));
+            }
+            changed
         };
         if changed {
             self.snapshot = self.endpoints[index].snapshot.clone();

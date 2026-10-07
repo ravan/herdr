@@ -502,3 +502,16 @@ herdr plugin pane close <pane_id>
 | `HERDR_WORKSPACE_ID` | 运行中窗格进程的公开工作区 id。 |
 | `HERDR_LOG` | 设置日志过滤,例如 `HERDR_LOG=herdr=debug`。 |
 | `HERDR_DISABLE_SOUND` | 即使启用了声音通知也禁用声音播放。 |
+
+## Mission control 与组织管理
+
+在 TUI 中用 `ctrl+b m` 打开 Mission control。集合和任务的创建、分配、停放及维护使用 TUI 菜单或 [JSON 套接字 API](/zh-cn/docs/socket-api/) 中独立公布的方法。使用 `workspace list`、`tab list`、`pane list` 返回的当前 ID；目录属于所选端点和会话。
+
+```bash
+herdr --session work pane list
+herdr --session work pane move w1:p2 --tab w2:t1 --split right
+herdr --session work agent read w2:p3 --source detection --format text
+herdr --session work agent explain w2:p3 --json
+```
+
+将示例会话和 ID 替换为服务器实际返回的值。移动后使用 `.result.move_result.pane.pane_id`；示例目的地 ID 仅作说明。先在 Needs you 中选择代理，再到其原终端回复。`agent prompt` 会拒绝向已经 blocked 的代理提交输入。普通 CLI 移动保留显式窗格任务覆盖；没有覆盖时，窗格继承目标标签页任务。组织管理方法不可用时，这些命令仍可使用。参见[日常工作流程](/zh-cn/docs/how-to-work/)。

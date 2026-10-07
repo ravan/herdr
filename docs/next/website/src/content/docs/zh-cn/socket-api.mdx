@@ -796,3 +796,19 @@ herdr agent wait w1:p1 --until blocked
 {"id":"remove_member","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
 {"id":"uncollect","method":"collection.unassign_family","params":{"family_id":{"kind":"managed","key":"repository-family-key"},"collection_id":"collection_1"}}
 ```
+
+### 组织管理流程示例
+
+分配成员前先读取 `organization.get` 及当前工作区、标签页、窗格列表。以下请求示例属于一个会话；将所有 ID 替换为该端点已确认的 ID。每项操作需要服务器独立公布对应方法。
+
+```json
+{"id":"assign_tab","method":"mission.assign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"park","method":"collection.set_hibernating","params":{"collection_id":"collection_1","hibernating":true}}
+{"id":"jump","method":"pane.focus","params":{"pane_id":"w1:p2"}}
+{"id":"move","method":"pane.move","params":{"pane_id":"w1:p2","destination":{"type":"tab","tab_id":"w2:t1","split":"right"},"focus":true}}
+{"id":"remove_tab","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+```
+
+后续请求使用移动结果返回的当前窗格 ID。标签页任务适用于没有显式覆盖的窗格。`mission.clear_pane_override` 恢复继承，不会将窗格排除在所属标签页任务之外。停放或移除成员不会停止终端；聚焦会显示停放的目标而不改变停放标志。请在原终端回答真正等待输入的问题；组织管理方法不会合成回复或代理状态。
+
+服务器启动标识变化后，重新读取完整目录和当前目标列表，再提交新操作。组织管理方法失败或缺失时，普通输入和导航方法仍然可用。删除组织定义与 `worktree.remove` 是不同操作，检出目录会保留。参见[工作流程](/zh-cn/docs/how-to-work/)和 [CLI 参考](/zh-cn/docs/cli-reference/)。

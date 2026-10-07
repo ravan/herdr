@@ -502,3 +502,16 @@ herdr plugin pane close <pane_id>
 | `HERDR_WORKSPACE_ID` | 実行中ペインプロセスの公開ワークスペース id。 |
 | `HERDR_LOG` | ログフィルターを設定する。例: `HERDR_LOG=herdr=debug`。 |
 | `HERDR_DISABLE_SOUND` | サウンド通知が有効でも音の再生を無効にする。 |
+
+## Mission control と組織管理
+
+TUI では `ctrl+b m` で Mission control を開きます。コレクションやミッションの作成、割り当て、退避、管理は TUI のメニュー、または[JSON ソケット API](/ja/docs/socket-api/)で個別に公開されたメソッドを使います。`workspace list`、`tab list`、`pane list` が返す現在の ID を使ってください。カタログは選択したエンドポイントとセッションに属します。
+
+```bash
+herdr --session work pane list
+herdr --session work pane move w1:p2 --tab w2:t1 --split right
+herdr --session work agent read w2:p3 --source detection --format text
+herdr --session work agent explain w2:p3 --json
+```
+
+例のセッションと ID は実際のサーバーの値に置き換えます。移動後は `.result.move_result.pane.pane_id` を使ってください。例の移動先 ID は仮の値です。Needs you で対象を選び、待機中のエージェントには元のターミナルで応答します。`agent prompt` は既に blocked 状態のエージェントへの送信を拒否します。通常の CLI の移動ではペインの上書きを保持し、上書きがなければ移動先のタブを継承します。組織管理のメソッドが未対応でも、これらのコマンドは利用できます。[作業手順](/ja/docs/how-to-work/)を参照してください。

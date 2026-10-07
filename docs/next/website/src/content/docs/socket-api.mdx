@@ -989,3 +989,19 @@ Names must contain visible text after trimming. A move uses an absolute, zero-ba
 {"id":"remove_member","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
 {"id":"uncollect","method":"collection.unassign_family","params":{"family_id":{"kind":"managed","key":"repository-family-key"},"collection_id":"collection_1"}}
 ```
+
+### Organization workflow example
+
+Read `organization.get` and the current workspace, tab and pane lists before assigning members. The following requests illustrate one session; replace every example ID with a confirmed ID from that endpoint. Each operation requires its own advertised method.
+
+```json
+{"id":"assign_tab","method":"mission.assign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"park","method":"collection.set_hibernating","params":{"collection_id":"collection_1","hibernating":true}}
+{"id":"jump","method":"pane.focus","params":{"pane_id":"w1:p2"}}
+{"id":"move","method":"pane.move","params":{"pane_id":"w1:p2","destination":{"type":"tab","tab_id":"w2:t1","split":"right"},"focus":true}}
+{"id":"remove_tab","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+```
+
+Use the returned move result's current pane ID for later requests. A tab assignment applies to its panes unless they have explicit overrides. `mission.clear_pane_override` restores inheritance; it does not exclude a pane from its tab's mission. Parking and member removal do not stop terminals. Focus reveals parked work without changing the parked flag. Answer actual blocked questions in the original terminal; organization methods do not synthesize replies or agent status.
+
+After a server boot changes, reload the complete catalog and current target lists before issuing new actions. A failed or missing organization method does not make an ordinary pane input or navigation method unavailable. Deleting organization definitions is separate from `worktree.remove`; it retains checkouts. See the staged [workflow](/docs/how-to-work/) and [CLI reference](/docs/cli-reference/).

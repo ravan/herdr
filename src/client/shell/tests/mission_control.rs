@@ -618,7 +618,7 @@ fn mc_s6_view_switches_own_input_and_mouse_without_changing_terminal_context() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
-    let before = serde_json::to_value(state.snapshot.as_ref()).unwrap();
+    let before = serde_json::to_value(state.snapshot.as_deref()).unwrap();
     state.compose(50, 14).unwrap();
     state.handle_input_bytes(b"\x02m");
     let input = state.handle_input_bytes(b"\t");
@@ -638,7 +638,7 @@ fn mc_s6_view_switches_own_input_and_mouse_without_changing_terminal_context() {
         .any(|r| r.contains("No agents need you")));
     state.handle_input_bytes(b"\x1b");
     assert_eq!(
-        serde_json::to_value(state.snapshot.as_ref()).unwrap(),
+        serde_json::to_value(state.snapshot.as_deref()).unwrap(),
         before
     );
 }
@@ -659,7 +659,12 @@ fn open(state: &mut ClientShellState, cols: u16, rows: u16) {
     let y = frame_rows(&frame)
         .iter()
         .position(|row| row.contains("Mission control"))
-        .expect("Mission control is available in the existing menu") as u16;
+        .unwrap_or_else(|| {
+            panic!(
+                "Mission control is available in the existing menu: {:?}",
+                frame_rows(&frame)
+            )
+        }) as u16;
     let rect = state
         .hits
         .global_menu_rows
@@ -684,7 +689,7 @@ fn mc_s5_open_search_cancel_preserves_terminal_context_without_forwarding_input(
         viewport_rows: 2,
     });
     state.set_pane_surface(scrolled);
-    let before = serde_json::to_value(state.snapshot.as_ref()).unwrap();
+    let before = serde_json::to_value(state.snapshot.as_deref()).unwrap();
     let before_surface = state.pane_surface.clone();
     let layout = state.layout(106, 30);
     open(&mut state, 106, 30);
@@ -699,7 +704,7 @@ fn mc_s5_open_search_cancel_preserves_terminal_context_without_forwarding_input(
     assert!(cancel.actions.is_empty() && cancel.requests.is_empty() && !cancel.resize);
     assert!(state.overlay.is_none());
     assert_eq!(
-        serde_json::to_value(state.snapshot.as_ref()).unwrap(),
+        serde_json::to_value(state.snapshot.as_deref()).unwrap(),
         before
     );
     assert_eq!(state.pane_surface, before_surface);
@@ -1264,4 +1269,889 @@ fn mc_s5_search_from_a_heading_selects_a_matching_target_when_every_collection_i
     assert!(
         matches!(&input.actions[..],[ClientShellAction::Endpoint {request,..}] if matches!(&request.method,crate::api::schema::Method::PaneFocus(p) if p.pane_id=="pane_1"))
     );
+}
+
+#[test]
+fn mc_s10_irrelevant_focus_and_terminal_metadata_keep_open_spaces_projection() {
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"worker");
+    let before = frame_rows(&state.compose(140, 40).unwrap());
+    let work = state.mission_control_projection_work();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.focused_pane_id = Some("pane_2".into());
+    changed.panes[0].focused = false;
+    changed.tabs[0].zoomed = true;
+    changed.agents[0].terminal_title = Some("terminal repaint only".into());
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 4;
+    state.set_pane_surface(frame);
+    let after = frame_rows(&state.compose(140, 40).unwrap());
+    assert_eq!(
+        before.iter().find(|row| row.contains("pane_1")).map(|r| r
+            .chars()
+            .skip(13)
+            .take(114)
+            .collect::<String>()),
+        after.iter().find(|row| row.contains("pane_1")).map(|r| r
+            .chars()
+            .skip(13)
+            .take(114)
+            .collect::<String>()),
+        "focus and terminal metadata leave the composed target row unchanged"
+    );
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "irrelevant metadata must do zero full catalog projections"
+    );
+    let input = state.handle_input_bytes(b"\r");
+    assert!(
+        matches!(&input.actions[..], [ClientShellAction::Endpoint { request, .. }]
+        if matches!(&request.method, crate::api::schema::Method::PaneFocus(p) if p.pane_id == "pane_1"))
+    );
+}
+
+fn mc_s10_profile_client(count: usize) -> ClientShellState {
+    let mut state = parked_client();
+    let base = state.snapshot.as_deref().unwrap().clone();
+    let mut snap = base.clone();
+    snap.workspaces.clear();
+    snap.tabs.clear();
+    snap.panes.clear();
+    snap.agents.clear();
+    let workspace_count = if count == 1 { 1 } else { 3 };
+    let mut families = Vec::new();
+    let mut assignments = Vec::new();
+    for w in 0..workspace_count {
+        let mut workspace = base.workspaces[0].clone();
+        workspace.workspace_id = format!("ws_{w}");
+        workspace.label = format!("Repository {w}");
+        workspace.worktree.as_mut().unwrap().key = format!("family_{w}");
+        workspace.worktree.as_mut().unwrap().label = format!("Family {w}");
+        snap.workspaces.push(workspace);
+        let mut tab = base.tabs[0].clone();
+        tab.tab_id = format!("tab_{w}");
+        tab.workspace_id = format!("ws_{w}");
+        tab.label = format!("Task {w}");
+        snap.tabs.push(tab);
+        families.push(serde_json::json!({"family_id":{"kind":"managed","key":format!("family_{w}")},"collection_id":"active"}));
+        assignments.push(serde_json::json!({"target":{"kind":"tab","tab_id":format!("tab_{w}")},"mission_id":format!("m{w}")}));
+    }
+    for p in 0..count {
+        let w = p % workspace_count;
+        let mut pane = base.panes[0].clone();
+        pane.pane_id = format!("pane_{p}");
+        pane.workspace_id = format!("ws_{w}");
+        pane.tab_id = format!("tab_{w}");
+        snap.panes.push(pane);
+        let mut agent = base.agents[0].clone();
+        agent.pane_id = format!("pane_{p}");
+        agent.workspace_id = format!("ws_{w}");
+        agent.tab_id = format!("tab_{w}");
+        agent.agent_status = AgentStatus::Blocked;
+        agent.name = Some(format!("Worker {p}"));
+        snap.agents.push(agent);
+    }
+    snap.focused_workspace_id = Some("ws_0".into());
+    snap.focused_tab_id = Some("tab_0".into());
+    snap.focused_pane_id = Some("pane_0".into());
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snap));
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1,
+        serde_json::from_value(serde_json::json!({"boot_id":"boot-1","organization":{
+            "revision":3,"collections":[{"id":"active","name":"Infrastructure","order":0,"hibernating":false}],
+            "family_assignments":families,"mission_assignments":assignments,
+            "missions":[{"id":"m0","name":"Mission zero","order":0},{"id":"m1","name":"Mission one","order":1},{"id":"m2","name":"Mission two","order":2}]
+        }})).unwrap());
+    let mut frame = surface();
+    frame.panes[0].pane_id = "pane_0".into();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    state.set_pane_surface(frame);
+    state.handle_input_bytes(b"\x02m");
+    state
+}
+
+#[test]
+#[ignore = "manual open mission control semantic composition scaling profile"]
+fn mission_control_open_render_scale_profile() {
+    // Fixture construction is outside every timed interval in both baseline/final.
+    for panes in [1, 15, 60] {
+        for (cols, rows) in [(140, 40), (50, 14)] {
+            for view in 0..3 {
+                for class in [
+                    "unchanged",
+                    "irrelevant_snapshot",
+                    "irrelevant_catalog",
+                    "relevant_label",
+                ] {
+                    for clients in [1, 2] {
+                        let mut states = (0..clients)
+                            .map(|_| mc_s10_profile_client(panes))
+                            .collect::<Vec<_>>();
+                        for state in &mut states {
+                            for _ in 0..view {
+                                state.handle_input_bytes(b"\t");
+                            }
+                            for _ in 0..10 {
+                                std::hint::black_box(state.compose(cols, rows).unwrap());
+                            }
+                        }
+                        let before_work = states
+                            .iter()
+                            .map(|s| s.mission_control_projection_work())
+                            .sum::<usize>();
+                        let mut samples = Vec::new();
+                        for i in 0..35 {
+                            let mut updates = Vec::new();
+                            for state in &states {
+                                let mut snap = state.snapshot.as_deref().unwrap().clone();
+                                snap.revision += 1;
+                                if class == "irrelevant_snapshot" {
+                                    snap.tabs[0].zoomed = i % 2 == 0;
+                                    snap.agents[0].terminal_title = Some(format!("paint{i}"));
+                                }
+                                if class == "relevant_label" {
+                                    snap.panes[0].foreground_cwd = Some(format!("/work/{i}"));
+                                }
+                                let mut catalog = state.endpoints[0].organization.clone().unwrap();
+                                catalog.organization.revision += 1;
+                                catalog.organization.missions[0].objective =
+                                    Some(format!("objective{i}"));
+                                updates.push((snap, catalog));
+                            }
+                            let start = std::time::Instant::now();
+                            for (state, (snap, catalog)) in states.iter_mut().zip(updates) {
+                                if class == "irrelevant_catalog" {
+                                    state.set_endpoint_organization_for_generation(
+                                        &ClientEndpointId::Local,
+                                        1,
+                                        catalog,
+                                    );
+                                } else if class != "unchanged" {
+                                    state.set_endpoint_snapshot_for_generation(
+                                        &ClientEndpointId::Local,
+                                        1,
+                                        Box::new(snap),
+                                    );
+                                    let mut frame = surface();
+                                    frame.panes[0].pane_id = "pane_0".into();
+                                    frame.projection_revision =
+                                        state.snapshot.as_ref().unwrap().revision;
+                                    frame.surface_revision = i + 10;
+                                    state.set_pane_surface(frame);
+                                }
+                                std::hint::black_box(state.compose(cols, rows).unwrap());
+                            }
+                            samples.push(start.elapsed().as_nanos());
+                        }
+                        samples.sort_unstable();
+                        let work = states
+                            .iter()
+                            .map(|s| s.mission_control_projection_work())
+                            .sum::<usize>()
+                            - before_work;
+                        eprintln!("mission_control_open panes={panes} workspaces={} families={} missions=3 clients={clients} geometry={cols}x{rows} view={view} change={class} stages=ingress+compose samples=35 median_us={:.3} p95_us={:.3} full_projections={work}",if panes==1{1}else{3},if panes==1{1}else{3}, samples[17] as f64/1000.,samples[33] as f64/1000.);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn mc_s10_spaces_ignores_mission_objective_and_order_but_missions_refreshes_them() {
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    let work = state.mission_control_projection_work();
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.organization.revision += 1;
+    catalog.organization.missions[0].objective = Some("S10 objective changed".into());
+    catalog.organization.missions[0].order = 2;
+    catalog.organization.missions[2].order = 0;
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    let spaces = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+    assert!(!spaces.contains("S10 objective changed"));
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "Spaces does not consume mission objectives or order"
+    );
+    state.handle_input_bytes(b"\t");
+    let missions = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+    assert!(missions.contains("S10 objective changed"));
+    assert!(missions.find("Empty objective").unwrap() < missions.find("Tako platform").unwrap());
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        1,
+        "view switch builds its own semantic rows once"
+    );
+}
+
+#[test]
+fn mc_s10_missions_rebuild_only_for_effective_members_and_definition_content() {
+    let mut state = mission_members_client();
+    let mut initial = state.snapshot.as_deref().unwrap().clone();
+    let mut tab = initial.tabs[0].clone();
+    tab.tab_id = "unassigned-tab".into();
+    initial.tabs.push(tab);
+    let mut pane = initial.panes[0].clone();
+    pane.pane_id = "unassigned-pane".into();
+    pane.tab_id = "unassigned-tab".into();
+    initial.panes.push(pane);
+    let mut agent = initial.agents[0].clone();
+    agent.pane_id = "unassigned-pane".into();
+    agent.tab_id = "unassigned-tab".into();
+    initial.agents.push(agent);
+    initial.revision += 1;
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(initial));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 5;
+    state.set_pane_surface(frame);
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t");
+    let before = frame_rows(&state.compose(140, 40).unwrap());
+    let work = state.mission_control_projection_work();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.workspaces[0]
+        .tokens
+        .push(("ignored".into(), "workspace token".into()));
+    changed.tabs[0].zoomed = true;
+    changed.focused_pane_id = Some("pane_2".into());
+    changed.tabs[1].label = "unassigned chatter".into();
+    changed.panes[2].foreground_cwd = Some("/unassigned/chatter".into());
+    changed.agents[1].title = Some("unassigned chatter".into());
+    changed.agents[0].agent_status = AgentStatus::Working;
+    changed.agents[0].state_change_seq += 1;
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 6;
+    state.set_pane_surface(frame);
+    let after = frame_rows(&state.compose(140, 40).unwrap());
+    assert_eq!(
+        before
+            .iter()
+            .filter(|r| r.contains("pane_1"))
+            .map(|r| r.chars().skip(13).take(114).collect::<String>())
+            .collect::<Vec<_>>(),
+        after
+            .iter()
+            .filter(|r| r.contains("pane_1"))
+            .map(|r| r.chars().skip(13).take(114).collect::<String>())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "unassigned and presentation-only metadata do no mission projection work"
+    );
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.panes[0].foreground_cwd = Some("/changed/member".into());
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 7;
+    state.set_pane_surface(frame);
+    assert!(frame_rows(&state.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("/changed/member"));
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        1,
+        "changed member location rebuilds once"
+    );
+}
+
+#[test]
+fn mc_s10_needs_you_ignores_unblocked_chatter_and_unconsumed_catalog_edits() {
+    let mut state = mission_members_client();
+    let mut initial = state.snapshot.as_deref().unwrap().clone();
+    initial.revision += 1;
+    initial.agents[0].agent_status = AgentStatus::Blocked;
+    let mut unblocked = initial.agents[0].clone();
+    unblocked.pane_id = "pane_2".into();
+    unblocked.agent_status = AgentStatus::Working;
+    unblocked.name = Some("unblocked worker".into());
+    initial.agents.push(unblocked);
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(initial));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 5;
+    state.set_pane_surface(frame);
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t\tworker");
+    assert!(frame_rows(&state.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("pane_1"));
+    let work = state.mission_control_projection_work();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.agents[1].agent_status = AgentStatus::Idle;
+    changed.agents[1].state_change_seq += 1;
+    changed.agents[1].title = Some("unblocked progress".into());
+    changed.panes[1].label = Some("unblocked renamed".into());
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 6;
+    state.set_pane_surface(frame);
+    state.compose(140, 40).unwrap();
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "unblocked chatter does zero queue reconstruction"
+    );
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.organization.revision += 1;
+    catalog.organization.missions[0].objective = Some("not a queue field".into());
+    catalog.organization.missions[2].name =
+        "unused empty definition".to_owned().try_into().unwrap();
+    catalog.organization.missions[0].order = 2;
+    catalog.organization.missions[2].order = 0;
+    catalog.organization.collections[0].name =
+        "unused collection heading".to_owned().try_into().unwrap();
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    assert!(frame_rows(&state.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("pane_1"));
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "queue ignores objective/order/empty definition/collection heading edits"
+    );
+    let mut answered = state.snapshot.as_deref().unwrap().clone();
+    answered.revision += 1;
+    answered.agents[0].agent_status = AgentStatus::Idle;
+    answered.agents[0].state_change_seq += 1;
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(answered));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 7;
+    state.set_pane_surface(frame);
+    assert!(frame_rows(&state.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("No agents need you"));
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        1,
+        "authoritative reply removes blocked member once"
+    );
+    assert!(
+        state.handle_input_bytes(b"\r").actions.is_empty(),
+        "answered capture cannot focus another worker"
+    );
+}
+
+#[test]
+fn mc_s10_cross_mission_source_permutations_preserve_semantic_group_order() {
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\t");
+    let before = frame_rows(&state.compose(140, 40).unwrap());
+    let work = state.mission_control_projection_work();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.panes.reverse();
+    changed.agents.reverse();
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 5;
+    state.set_pane_surface(frame);
+    let after = frame_rows(&state.compose(140, 40).unwrap());
+    assert_eq!(
+        before, after,
+        "different missions keep independent group order"
+    );
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "source order across independent groups is unconsumed"
+    );
+}
+
+#[test]
+fn mc_s10_spaces_ignores_agent_vector_order_and_keeps_all_agent_search_fields() {
+    let mut state = mission_members_client();
+    let mut initial = state.snapshot.as_deref().unwrap().clone();
+    initial.revision += 1;
+    let mut sibling = initial.agents[0].clone();
+    sibling.pane_id = "pane_2".into();
+    sibling.name = Some("Sibling agent".into());
+    initial.agents.push(sibling);
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(initial));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 5;
+    state.set_pane_surface(frame);
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"worker");
+    state.compose(140, 40).unwrap();
+    let work = state.mission_control_projection_work();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.agents.reverse();
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 6;
+    state.set_pane_surface(frame);
+    assert!(frame_rows(&state.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("pane_1"));
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        0,
+        "agent vector order is not consumed by Spaces"
+    );
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed
+        .agents
+        .iter_mut()
+        .find(|a| a.pane_id == "pane_1")
+        .unwrap()
+        .title = Some("S10 title searchable".into());
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 7;
+    state.set_pane_surface(frame);
+    state.handle_input_bytes(b"\x15S10 title searchable");
+    assert!(frame_rows(&state.compose(140, 40).unwrap())
+        .join("\n")
+        .contains("pane_1"));
+    assert_eq!(
+        state.mission_control_projection_work() - work,
+        1,
+        "searched title edit rebuilds once"
+    );
+}
+
+#[test]
+fn mc_s10_duplicate_labels_keep_exact_keyboard_mouse_targets_and_theme_contrast() {
+    for theme in ["catppuccin", "catppuccin-latte", "terminal"] {
+        for (cols, rows) in [(140, 40), (50, 14)] {
+            for mouse in [false, true] {
+                let mut state = mission_members_client();
+                state.config.palette = Palette::from_name(theme).unwrap();
+                let mut initial = state.snapshot.as_deref().unwrap().clone();
+                initial.revision += 1;
+                let mut sibling = initial.agents[0].clone();
+                sibling.pane_id = "pane_2".into();
+                initial.agents.push(sibling);
+                state.set_endpoint_snapshot_for_generation(
+                    &ClientEndpointId::Local,
+                    1,
+                    Box::new(initial),
+                );
+                let mut frame = surface();
+                frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+                frame.surface_revision = 5;
+                state.set_pane_surface(frame);
+                state.compose(cols, rows).unwrap();
+                state.handle_input_bytes(b"\x02mworker");
+                if !mouse {
+                    state.handle_input_bytes(b"\x1b[B");
+                }
+                let frame = state.compose(cols, rows).unwrap();
+                let text = frame_rows(&frame);
+                let y = text
+                    .iter()
+                    .position(|r| r.contains("pane_2"))
+                    .expect("duplicate named exact target remains visible");
+                let worker = text[y].find("worker").unwrap();
+                let x = text[y][..worker].chars().count();
+                if !mouse {
+                    let cell = &frame.cells[y * usize::from(cols) + x];
+                    assert_ne!(
+                        cell.fg, cell.bg,
+                        "{theme}: selected target text remains distinct from its background"
+                    );
+                }
+                let source = serde_json::to_value(state.snapshot.as_deref()).unwrap();
+                let catalog = state.endpoints[0].organization.clone();
+                let work = state.mission_control_projection_work();
+                for _ in 0..4 {
+                    assert_eq!(
+                        frame_rows(&state.compose(cols, rows).unwrap()),
+                        text,
+                        "repeated rendering remains stable"
+                    );
+                }
+                assert_eq!(
+                    state.mission_control_projection_work() - work,
+                    0,
+                    "retained composition does zero catalog reconstruction"
+                );
+                assert_eq!(
+                    serde_json::to_value(state.snapshot.as_deref()).unwrap(),
+                    source,
+                    "drawing preserves confirmed snapshot"
+                );
+                assert_eq!(
+                    state.endpoints[0].organization, catalog,
+                    "drawing preserves catalog"
+                );
+                let input = if mouse {
+                    click(&mut state, Rect::new(x as u16, y as u16, 1, 1))
+                } else {
+                    state.handle_input_bytes(b"\r")
+                };
+                assert!(matches!(&input.actions[..],[ClientShellAction::Endpoint {request,..}] if matches!(&request.method,crate::api::schema::Method::PaneFocus(p) if p.pane_id=="pane_2")),"{theme} {cols}x{rows} mouse={mouse}: duplicate names cannot redirect selection");
+            }
+        }
+    }
+}
+
+#[test]
+fn mc_s10_spaces_searches_exact_public_workspace_tab_and_pane_ids() {
+    for (public_id, method) in [
+        ("ws_1", "workspace.focus"),
+        ("tab_1", "tab.focus"),
+        ("pane_2", "pane.focus"),
+    ] {
+        let mut state = mission_members_client();
+        open(&mut state, 140, 40);
+        state.handle_input_bytes(public_id.as_bytes());
+        let frame = state.compose(140, 40).unwrap();
+        let text = frame_rows(&frame).join("\n");
+        assert!(
+            !text.contains("No matching spaces"),
+            "public ID {public_id} must match an actual target row, not merely the query field"
+        );
+        let outcome = state.handle_input_bytes(b"\r");
+        let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+            panic!("public ID {public_id} resolves one exact focus action");
+        };
+        assert_eq!(crate::api::api_method_name(&request.method), method);
+        assert_eq!(
+            serde_json::to_value(&request.method).unwrap()["params"]
+                .as_object()
+                .unwrap()
+                .values()
+                .next()
+                .unwrap(),
+            public_id
+        );
+    }
+}
+
+#[test]
+fn mc_s10_complete_id_query_selects_exact_member_before_same_name_prefix_matches() {
+    for view in 0..3 {
+        let mut state = mission_members_client();
+        let mut initial = state.snapshot.as_deref().unwrap().clone();
+        initial.revision += 1;
+        initial.agents[0].agent_status = AgentStatus::Blocked;
+        let mut ten = initial.panes[0].clone();
+        ten.pane_id = "pane_10".into();
+        ten.label = Some("worker".into());
+        initial.panes.insert(0, ten);
+        let mut ten_agent = initial.agents[0].clone();
+        ten_agent.pane_id = "pane_10".into();
+        initial.agents.insert(0, ten_agent);
+        state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(initial));
+        let mut catalog = state.endpoints[0].organization.clone().unwrap();
+        catalog.organization.revision += 1;
+        catalog.organization.pane_mission_assignments.push(
+            crate::organization::PaneMissionAssignment {
+                pane_id: "pane_10".into(),
+                mission_id: crate::organization::MissionId("platform".into()),
+            },
+        );
+        state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+        let mut frame = surface();
+        frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+        frame.surface_revision = 5;
+        state.set_pane_surface(frame);
+        open(&mut state, 140, 40);
+        for _ in 0..view {
+            state.handle_input_bytes(b"\t");
+        }
+        state.handle_input_bytes(b"pane_10");
+        state.compose(140, 40).unwrap();
+        state.handle_input_bytes(b"\x15  pane_1  ");
+        let outcome = state.handle_input_bytes(b"\r");
+        assert!(matches!(&outcome.actions[..],[ClientShellAction::Endpoint {request,..}] if matches!(&request.method,crate::api::schema::Method::PaneFocus(p) if p.pane_id=="pane_1")),"view{view}: a complete ID selects its exact target even when prior same-name pane_10 still substring-matches");
+    }
+}
+
+#[test]
+fn mc_s10_complete_id_typing_cannot_refresh_old_generation_or_boot_capture() {
+    for view in 0..3 {
+        for new_boot in [false, true] {
+            let mut state = mission_members_client();
+            let mut initial = state.snapshot.as_deref().unwrap().clone();
+            initial.agents[0].agent_status = AgentStatus::Blocked;
+            initial.revision += 1;
+            state.set_endpoint_snapshot_for_generation(
+                &ClientEndpointId::Local,
+                1,
+                Box::new(initial),
+            );
+            let mut frame = surface();
+            frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+            frame.surface_revision = 5;
+            state.set_pane_surface(frame);
+            open(&mut state, 140, 40);
+            for _ in 0..view {
+                state.handle_input_bytes(b"\t");
+            }
+            state.handle_input_bytes(b"pane_1");
+            state.compose(140, 40).unwrap();
+            let mut replacement = state.snapshot.as_deref().unwrap().clone();
+            replacement.revision += 1;
+            if new_boot {
+                replacement.boot_id = "replacement-boot".into();
+            }
+            let mut catalog = state.endpoints[0].organization.clone().unwrap();
+            catalog.boot_id = replacement.boot_id.clone();
+            state.cache_endpoint_snapshot_for_generation(
+                &ClientEndpointId::Local,
+                2,
+                Box::new(replacement),
+            );
+            state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 2, catalog);
+            state.activate_endpoint_projection(&ClientEndpointId::Local);
+            let mut frame = surface();
+            frame.boot_id = state.snapshot.as_ref().unwrap().boot_id.clone();
+            frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+            frame.surface_revision = 8;
+            state.set_pane_surface(frame);
+            state.compose(140, 40).unwrap();
+            state.handle_input_bytes(b"\x15pane_1");
+            assert!(state.handle_input_bytes(b"\r").actions.is_empty(),"view{view} boot_changed={new_boot}: exact-ID typing never revives abandoned capture");
+            let frame = state.compose(140, 40).unwrap();
+            let rows = frame_rows(&frame);
+            let y = rows
+                .iter()
+                .position(|r| r.contains("pane_1") && r.contains(" · "))
+                .unwrap();
+            let byte = rows[y].find("pane_1").unwrap();
+            let x = rows[y][..byte].chars().count();
+            let outcome = click(&mut state, Rect::new(x as u16, y as u16, 1, 1));
+            assert!(
+                matches!(&outcome.actions[..],[ClientShellAction::Endpoint {request,..}] if matches!(&request.method,crate::api::schema::Method::PaneFocus(p) if p.pane_id=="pane_1")),
+                "explicit current-row click gets a fresh capture"
+            );
+        }
+    }
+}
+
+#[test]
+fn mc_s10_token_value_sets_ignore_unused_keys_order_and_duplicates_per_view() {
+    for view in 0..3 {
+        let mut state = mission_members_client();
+        let mut initial = state.snapshot.as_deref().unwrap().clone();
+        initial.revision += 1;
+        initial.workspaces[0].tokens = vec![
+            ("one".into(), "workspace-alpha".into()),
+            ("two".into(), "workspace-beta".into()),
+        ];
+        initial.agents[0].agent_status = AgentStatus::Blocked;
+        initial.agents[0].tokens = vec![
+            ("one".into(), "value-alpha".into()),
+            ("two".into(), "value-beta".into()),
+        ];
+        initial.agents[0].state_labels = vec![
+            ("blocked".into(), "Waiting review".into()),
+            ("idle".into(), "Ready review".into()),
+        ];
+        state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(initial));
+        let mut frame = surface();
+        frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+        frame.surface_revision = 5;
+        state.set_pane_surface(frame);
+        open(&mut state, 140, 40);
+        for _ in 0..view {
+            state.handle_input_bytes(b"\t");
+        }
+        state.handle_input_bytes(b"value-alpha");
+        let before = frame_rows(&state.compose(140, 40).unwrap());
+        let work = state.mission_control_projection_work();
+        let mut reordered = state.snapshot.as_deref().unwrap().clone();
+        reordered.revision += 1;
+        reordered.workspaces[0].tokens.reverse();
+        reordered.workspaces[0].tokens[0].0 = "unused-new-key".into();
+        reordered.agents[0].tokens.reverse();
+        reordered.agents[0].tokens[0].0 = "unused-new-key".into();
+        reordered.agents[0]
+            .tokens
+            .push(("extra".into(), "value-alpha".into()));
+        reordered.agents[0].state_labels.reverse();
+        reordered.agents[0]
+            .state_labels
+            .push(("extra".into(), "Waiting review".into()));
+        state.set_endpoint_snapshot_for_generation(
+            &ClientEndpointId::Local,
+            1,
+            Box::new(reordered),
+        );
+        let mut frame = surface();
+        frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+        frame.surface_revision = 6;
+        state.set_pane_surface(frame);
+        assert_eq!(
+            before,
+            frame_rows(&state.compose(140, 40).unwrap()),
+            "view{view}: unused key/order/duplicate edits keep visible rows and search"
+        );
+        assert_eq!(
+            state.mission_control_projection_work() - work,
+            0,
+            "view{view}: unchanged consumed value set does zero rebuild"
+        );
+        // Duplicate blocked keys preserve first-value lookup semantics. The set
+        // of all searched values is unchanged while the effective caption changes.
+        let mut caption = state.snapshot.as_deref().unwrap().clone();
+        caption.revision += 1;
+        caption.agents[0].state_labels[0].0 = "blocked".into();
+        state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(caption));
+        let mut frame = surface();
+        frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+        frame.surface_revision = 7;
+        state.set_pane_surface(frame);
+        let text = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+        if view == 2 {
+            assert!(text.contains("Ready review"));
+            assert_eq!(
+                state.mission_control_projection_work() - work,
+                1,
+                "effective first blocked caption is a queue field"
+            );
+        } else {
+            assert_eq!(
+                state.mission_control_projection_work() - work,
+                0,
+                "other views consume label values, not the blocked lookup key"
+            );
+        }
+        state.handle_input_bytes(b"\x15value-beta");
+        assert!(
+            frame_rows(&state.compose(140, 40).unwrap())
+                .join("\n")
+                .contains("pane_1"),
+            "existing searched token values remain available"
+        );
+    }
+}
+
+#[test]
+fn mc_s10_sixty_blocked_members_compare_irrelevant_source_with_bounded_metadata_work() {
+    let mut state = mc_s10_profile_client(60);
+    state.handle_input_bytes(b"\t\t");
+    let before = frame_rows(&state.compose(140, 40).unwrap());
+    let projections = state.mission_control_projection_work();
+    let probes = state.mission_control_queue_metadata_probes();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.tabs[0].zoomed = !changed.tabs[0].zoomed;
+    changed.agents[0].terminal_title = Some("irrelevant paint".into());
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.panes[0].pane_id = "pane_0".into();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 8;
+    state.set_pane_surface(frame);
+    let after = frame_rows(&state.compose(140, 40).unwrap());
+    // Background chrome may reflect zoom, but the visible queue itself is unchanged.
+    assert_eq!(
+        before
+            .iter()
+            .skip(6)
+            .take(31)
+            .map(|r| r.chars().skip(13).take(114).collect::<String>())
+            .collect::<Vec<_>>(),
+        after
+            .iter()
+            .skip(6)
+            .take(31)
+            .map(|r| r.chars().skip(13).take(114).collect::<String>())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(state.mission_control_projection_work() - projections, 0);
+    let work = state.mission_control_queue_metadata_probes() - probes;
+    assert!(work<=20_000,"60 blocked members in3families, one irrelevant source replacement: {work} pane identity probes exceeds generous quadratic budget20,000");
+}
+
+#[test]
+fn mc_s10_queue_order_preserves_sequence_groups_and_ignores_orphan_positions() {
+    let mut state = mc_s10_profile_client(3);
+    state.handle_input_bytes(b"\t\t");
+    let install = |state: &mut ClientShellState, snapshot: ClientShellSnapshot| {
+        let revision = snapshot.revision;
+        state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot));
+        let mut frame = surface();
+        frame.panes[0].pane_id = "pane_0".into();
+        frame.projection_revision = revision;
+        frame.surface_revision = revision;
+        state.set_pane_surface(frame);
+    };
+    let mut initial = state.snapshot.as_deref().unwrap().clone();
+    initial.revision += 1;
+    initial.agents[0].state_change_seq = 0;
+    let mut orphan = initial.agents[1].clone();
+    orphan.pane_id = "missing-pane".into();
+    initial.agents.insert(0, orphan);
+    install(&mut state, initial);
+    let queue = |state: &mut ClientShellState| {
+        frame_rows(&state.compose(140, 40).unwrap())
+            .iter()
+            .skip(6)
+            .take(31)
+            .map(|row| row.chars().skip(13).take(114).collect::<String>())
+            .collect::<Vec<_>>()
+    };
+    let before = queue(&mut state);
+    let work = state.mission_control_projection_work();
+    let mut reordered = state.snapshot.as_deref().unwrap().clone();
+    reordered.revision += 1;
+    // The orphan moves, and the distinct-sequence member crosses the tied group.
+    // Neither changes the qualified stable queue order.
+    reordered.agents.rotate_left(2);
+    install(&mut state, reordered);
+    assert_eq!(before, queue(&mut state));
+    assert_eq!(state.mission_control_projection_work() - work, 0);
+    let mut tied = state.snapshot.as_deref().unwrap().clone();
+    tied.revision += 1;
+    tied.agents.swap(0, 1);
+    install(&mut state, tied);
+    let changed = queue(&mut state);
+    assert_ne!(
+        before, changed,
+        "equal-sequence members preserve source order"
+    );
+    assert_eq!(state.mission_control_projection_work() - work, 1);
+}
+
+#[test]
+fn mc_s10_sixty_blocked_members_short_circuit_definite_first_cwd_change() {
+    let mut state = mc_s10_profile_client(60);
+    state.handle_input_bytes(b"\t\t");
+    let before = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+    assert!(before.contains("pane_0"));
+    let projections = state.mission_control_projection_work();
+    let probes = state.mission_control_queue_metadata_probes();
+    let mut changed = state.snapshot.as_deref().unwrap().clone();
+    changed.revision += 1;
+    changed.panes[0].cwd = Some("/changed-first-cwd".into());
+    changed.panes[0].foreground_cwd = None;
+    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(changed));
+    let mut frame = surface();
+    frame.panes[0].pane_id = "pane_0".into();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 8;
+    state.set_pane_surface(frame);
+    let after = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+    assert!(after.contains("/changed-first-cwd"));
+    assert_eq!(state.mission_control_projection_work() - projections, 1);
+    let work = state.mission_control_queue_metadata_probes() - probes;
+    assert!(work <= 2_000, "60 blocked members, relevant cwd of first member: {work} pane identity probes exceeds generous first-change budget2,000");
 }

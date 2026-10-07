@@ -2,6 +2,7 @@ use super::render::display_width;
 use super::*;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 mod members;
+mod projection;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum MissionControlView {
@@ -96,6 +97,8 @@ pub(super) struct MissionControl {
     pub(super) query: TextEditor,
     endpoint_id: ClientEndpointId,
     stamp: Option<ProjectionStamp>,
+    projection_snapshot: Option<Arc<ClientShellSnapshot>>,
+    projection_catalog: Option<crate::organization::OrganizationState>,
     all_rows: Vec<SpaceRow>,
     pub(super) rows: Vec<SpaceRow>,
     pub(super) selected: Option<SpaceSelection>,
@@ -113,6 +116,33 @@ pub(super) struct MissionControl {
 }
 
 impl MissionControl {
+    fn select_exact_query_target(&mut self, query_changed: bool) {
+        if !query_changed
+            || self.selection_stale
+            || self.selected.as_ref().is_some_and(|selected| {
+                !self
+                    .all_rows
+                    .iter()
+                    .any(|row| row.selection.as_ref() == Some(selected))
+            })
+        {
+            return;
+        }
+        let query = self.query.as_str().trim();
+        let exact = self
+            .rows
+            .iter()
+            .find_map(|row| match row.selection.as_ref() {
+                Some(SpaceSelection::Target(target)) if target.public_id() == query => {
+                    row.selection.clone()
+                }
+                _ => None,
+            });
+        if let Some(exact) = exact {
+            self.selected = Some(exact);
+        }
+    }
+
     fn fit_scope(&mut self, width: u16) {
         if self.scope_width == Some(width) {
             return;
@@ -142,7 +172,11 @@ impl MissionControl {
     fn filter(&mut self, query_changed: bool) {
         let query = self.query.as_str().to_lowercase();
         let terms = query.split_whitespace().collect::<Vec<_>>();
-        let matches_query = |row: &SpaceRow| terms.iter().all(|term| row.search.contains(term));
+        let public_id = self.query.as_str().trim();
+        let matches_query = |row: &SpaceRow| {
+            terms.iter().all(|term| row.search.contains(term))
+                || matches!(&row.selection, Some(SpaceSelection::Target(target)) if target.public_id() == public_id)
+        };
         if self.view != MissionControlView::Spaces {
             let matching_missions = self
                 .all_rows
@@ -185,6 +219,7 @@ impl MissionControl {
                     .or_else(|| self.rows.iter().find(|row| row.selection.is_some()))
                     .and_then(|row| row.selection.clone());
             }
+            self.select_exact_query_target(query_changed);
             if query_changed {
                 self.scroll = 0;
                 self.reveal_selected = true;
@@ -265,6 +300,7 @@ impl MissionControl {
                 .or_else(|| self.rows.iter().find(|row| row.selection.is_some()))
                 .and_then(|row| row.selection.clone());
         }
+        self.select_exact_query_target(query_changed);
         if query_changed {
             self.scroll = 0;
             self.reveal_selected = true;
@@ -347,6 +383,16 @@ impl MissionControl {
 }
 
 impl ClientShellState {
+    /// Work observed at the semantic composition/input boundary, never a wire field.
+    #[cfg(test)]
+    pub(crate) fn mission_control_projection_work(&self) -> usize {
+        self.mission_control_projection_work
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mission_control_queue_metadata_probes(&self) -> usize {
+        projection::queue_metadata_probes()
+    }
     pub(super) fn open_mission_control(&mut self) {
         // Finalize client selection without copying or changing scrollback. The
         // terminal's already forwarded mouse press still owns its owed release.
@@ -370,6 +416,8 @@ impl ClientShellState {
                 scope_width: None,
                 endpoint_id: self.active_endpoint_id.clone(),
                 stamp: None,
+                projection_snapshot: None,
+                projection_catalog: None,
                 all_rows: Vec::new(),
                 rows: Vec::new(),
                 selected: None,
@@ -389,7 +437,7 @@ impl ClientShellState {
         self.refresh_mission_control();
     }
 
-    /// Cached once per snapshot revision while open, before drawing or input dispatch.
+    /// Rebuild semantic rows only for relevant source changes, before drawing/input.
     pub(super) fn refresh_mission_control(&mut self) {
         let Some(ClientShellOverlay::MissionControl(control)) = self.overlay.as_mut() else {
             return;
@@ -432,7 +480,15 @@ impl ClientShellState {
             revision: snapshot.revision,
             organization_revision: catalog.map(|c| c.revision),
         };
-        if control.stamp.as_ref() == Some(&stamp) {
+        // The same immutable source and authority stamp retain the previously
+        // validated capture. Replacement sources validate it before content reuse.
+        if control.stamp.as_ref() == Some(&stamp)
+            && control
+                .projection_snapshot
+                .as_ref()
+                .zip(endpoint.snapshot.as_ref())
+                .is_some_and(|(previous, current)| Arc::ptr_eq(previous, current))
+        {
             return;
         }
         if let Some(SpaceSelection::Mission(id)) = &control.selected {
@@ -444,11 +500,39 @@ impl ClientShellState {
         if let Some(SpaceSelection::Target(target)) = control.selected.as_ref() {
             control.selection_stale |= !members::target_applicable(endpoint, target);
         }
+        let unchanged = control.stamp.as_ref().is_some_and(|previous| {
+            previous.boot_id == stamp.boot_id
+                && previous.generation == stamp.generation
+                && control
+                    .projection_snapshot
+                    .as_deref()
+                    .is_some_and(|previous_snapshot| {
+                        projection::unchanged(
+                            control.view,
+                            previous_snapshot,
+                            snapshot,
+                            control.projection_catalog.as_ref(),
+                            catalog,
+                        )
+                    })
+        });
+        control.projection_snapshot = endpoint.snapshot.clone();
+        if unchanged {
+            control.stamp = Some(stamp);
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.mission_control_projection_work += 1;
+        }
         let rows = match control.view {
             MissionControlView::Spaces => project_spaces(endpoint),
             MissionControlView::Missions => members::project_missions(endpoint),
             MissionControlView::NeedsYou => members::project_needs_you(endpoint),
         };
+        // Retain catalog content only when rebuilding; irrelevant revision changes
+        // compare borrowed metadata and do not copy the catalog again.
+        control.projection_catalog = catalog.cloned();
         control.all_rows = rows;
         control.stamp = Some(stamp);
         control.filter(false);

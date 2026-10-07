@@ -802,3 +802,19 @@ herdr agent wait w1:p1 --until blocked
 {"id":"remove_member","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
 {"id":"uncollect","method":"collection.unassign_family","params":{"family_id":{"kind":"managed","key":"repository-family-key"},"collection_id":"collection_1"}}
 ```
+
+### 組織管理の作業例
+
+割り当てる前に `organization.get` と現在のワークスペース、タブ、ペインの一覧を取得します。次の例は 1 つのセッションを表します。すべての ID を、そのエンドポイントで確認した ID に置き換えてください。各操作には対応するメソッドの公開が必要です。
+
+```json
+{"id":"assign_tab","method":"mission.assign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"park","method":"collection.set_hibernating","params":{"collection_id":"collection_1","hibernating":true}}
+{"id":"jump","method":"pane.focus","params":{"pane_id":"w1:p2"}}
+{"id":"move","method":"pane.move","params":{"pane_id":"w1:p2","destination":{"type":"tab","tab_id":"w2:t1","split":"right"},"focus":true}}
+{"id":"remove_tab","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+```
+
+以降の操作では、移動の結果が返した現在のペイン ID を使います。タブの割り当ては、明示的な上書きがないペインに適用されます。`mission.clear_pane_override` は継承を復元し、タブのミッションからペインを除外する操作ではありません。退避やメンバーの削除ではターミナルを停止しません。フォーカスは退避フラグを変えずに対象を表示します。実際の待機状態には元のターミナルで応答します。組織管理のメソッドは応答やエージェントの状態を生成しません。
+
+サーバーの起動識別子が変わったら、完全なカタログと現在の対象一覧を再取得してから操作します。組織管理のメソッドが失敗したり未対応でも、通常の入力やナビゲーションは引き続き利用できます。定義の削除は `worktree.remove` と別の操作で、チェックアウトを保持します。[作業手順](/ja/docs/how-to-work/)と [CLI リファレンス](/ja/docs/cli-reference/)を参照してください。
