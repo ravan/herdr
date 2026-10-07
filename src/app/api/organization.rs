@@ -1,3 +1,5 @@
+mod maintenance;
+
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{CollectionAssignFamilyParams, CollectionCreateParams, ResponseResult};
 use crate::app::App;
@@ -908,3 +910,6 @@ mod mission_tests {
         app.state.assert_invariants_for_test();
     }
 }
+
+#[cfg(test)]
+mod maintenance_tests;

@@ -1,6 +1,8 @@
 //! Pure, server-owned organization of existing session resources.
 use serde::{Deserialize, Serialize};
 
+mod maintenance;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct CollectionId(pub String);

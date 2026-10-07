@@ -1133,7 +1133,21 @@ fn project_spaces(endpoint: &ClientShellEndpoint) -> Vec<SpaceRow> {
             Some(c.id.clone()),
             false,
         ));
-        rows.extend(sections.remove(&Some(c.id.clone())).unwrap_or_default());
+        let members = sections.remove(&Some(c.id.clone())).unwrap_or_default();
+        if members.is_empty() {
+            rows.push(SpaceRow {
+                label: "Empty collection".into(),
+                detail: "Assign a family from its workspace menu".into(),
+                depth: 1,
+                search: c.name.as_str().to_lowercase(),
+                selection: None,
+                section: Some(c.id.clone()),
+                parked: c.hibernating,
+                family_key: None,
+            });
+        } else {
+            rows.extend(members);
+        }
     }
     rows.push(heading("Uncollected".into(), None, None, false));
     rows.extend(sections.remove(&None).unwrap_or_default());
@@ -1150,7 +1164,21 @@ fn project_spaces(endpoint: &ClientShellEndpoint) -> Vec<SpaceRow> {
             Some(c.id.clone()),
             true,
         ));
-        rows.extend(sections.remove(&Some(c.id.clone())).unwrap_or_default());
+        let members = sections.remove(&Some(c.id.clone())).unwrap_or_default();
+        if members.is_empty() {
+            rows.push(SpaceRow {
+                label: "Empty collection".into(),
+                detail: "Assign a family from its workspace menu".into(),
+                depth: 1,
+                search: c.name.as_str().to_lowercase(),
+                selection: None,
+                section: Some(c.id.clone()),
+                parked: c.hibernating,
+                family_key: None,
+            });
+        } else {
+            rows.extend(members);
+        }
     }
     rows
 }

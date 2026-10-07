@@ -1744,6 +1744,49 @@
           ],
           "type": "object"
         },
+        "CollectionDeleteParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "collection_id"
+          ],
+          "type": "object"
+        },
+        "CollectionMoveParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "to_index": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "collection_id",
+            "to_index"
+          ],
+          "type": "object"
+        },
+        "CollectionRenameParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "collection_id",
+            "name"
+          ],
+          "type": "object"
+        },
         "CollectionSetHibernatingParams": {
           "properties": {
             "collection_id": {
@@ -1756,6 +1799,21 @@
           "required": [
             "collection_id",
             "hibernating"
+          ],
+          "type": "object"
+        },
+        "CollectionUnassignFamilyParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "$ref": "#/schemas/request/$defs/FamilyId"
+            }
+          },
+          "required": [
+            "family_id",
+            "collection_id"
           ],
           "type": "object"
         },
@@ -2489,6 +2547,67 @@
           ],
           "type": "object"
         },
+        "MissionDeleteParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionMoveParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "to_index": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "mission_id",
+            "to_index"
+          ],
+          "type": "object"
+        },
+        "MissionRenameParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mission_id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "MissionSetObjectiveParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "objective": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "mission_id",
+            "objective"
+          ],
+          "type": "object"
+        },
         "MissionTarget": {
           "oneOf": [
             {
@@ -2508,6 +2627,21 @@
               "type": "object"
             }
           ]
+        },
+        "MissionUnassignParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/schemas/request/$defs/MissionTarget"
+            }
+          },
+          "required": [
+            "target",
+            "mission_id"
+          ],
+          "type": "object"
         },
         "NotificationShowParams": {
           "properties": {
@@ -5155,6 +5289,134 @@
         {
           "properties": {
             "method": {
+              "const": "mission.rename",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionRenameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.move",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.move",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.set_objective",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionSetObjectiveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionDeleteParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.unassign_family",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionUnassignFamilyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.unassign",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionUnassignParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionDeleteParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "organization.get",
               "type": "string"
             },
@@ -5224,6 +5486,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/MissionClearPaneOverrideParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.rename",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionRenameParams"
             }
           },
           "required": [

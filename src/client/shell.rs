@@ -29,6 +29,7 @@ mod mouse;
 mod notification_policy;
 mod notifications;
 mod organization;
+mod organization_maintenance;
 mod overlay_input;
 mod pane_missions;
 mod preferences;

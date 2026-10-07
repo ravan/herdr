@@ -36,7 +36,7 @@ impl ClientContextMenuOverlay {
                     action: Action::AssignMission(index),
                 })
                 .collect(),
-            ClientContextMenuTarget::Missions { missions } => {
+            ClientContextMenuTarget::Missions { missions, .. } => {
                 let mut rows = vec![item("New mission…", Action::NewMission)];
                 rows.extend(
                     missions
@@ -60,33 +60,61 @@ impl ClientContextMenuOverlay {
                 rows
             }
 
-            ClientContextMenuTarget::Collection { hibernating, .. } => vec![item(
-                if *hibernating {
-                    "Hibernate collection"
-                } else {
-                    "Bring collection back"
-                },
-                Action::SetHibernating,
-            )],
-            ClientContextMenuTarget::CollectionPicker { collections, .. } => collections
-                .iter()
-                .enumerate()
-                .map(|(index, collection)| {
-                    let duplicate = collections
-                        .iter()
-                        .filter(|other| other.name == collection.name)
-                        .count()
-                        > 1;
-                    ClientContextMenuItem {
-                        label: if duplicate {
-                            format!("{} ({})", collection.name.as_str(), collection.id.0)
-                        } else {
-                            collection.name.as_str().to_owned()
-                        },
-                        action: Action::AssignCollection(index),
-                    }
-                })
-                .collect(),
+            ClientContextMenuTarget::MissionMaintenance { .. } => vec![
+                item("Rename mission…", Action::RenameMission),
+                item("Edit objective…", Action::EditMissionObjective),
+                item("Move earlier", Action::OrganizationEarlier),
+                item("Move later", Action::OrganizationLater),
+                item("Delete mission…", Action::DeleteOrganization),
+                item("Membership and restore…", Action::OrganizationInfo),
+            ],
+            ClientContextMenuTarget::Collection { hibernating, .. } => vec![
+                item(
+                    if *hibernating {
+                        "Hibernate collection"
+                    } else {
+                        "Bring collection back"
+                    },
+                    Action::SetHibernating,
+                ),
+                item("Rename collection…", Action::RenameCollection),
+                item("Move earlier", Action::OrganizationEarlier),
+                item("Move later", Action::OrganizationLater),
+                item("Delete collection…", Action::DeleteOrganization),
+                item("Membership and restore…", Action::OrganizationInfo),
+            ],
+            ClientContextMenuTarget::CollectionPicker {
+                collections,
+                current_collection,
+                ..
+            } => {
+                let mut rows: Vec<_> = collections
+                    .iter()
+                    .enumerate()
+                    .map(|(index, collection)| {
+                        let duplicate = collections
+                            .iter()
+                            .filter(|other| other.name == collection.name)
+                            .count()
+                            > 1;
+                        ClientContextMenuItem {
+                            label: if duplicate {
+                                format!("{} ({})", collection.name.as_str(), collection.id.0)
+                            } else {
+                                collection.name.as_str().to_owned()
+                            },
+                            action: Action::AssignCollection(index),
+                        }
+                    })
+                    .collect();
+                if current_collection.is_some() {
+                    rows.push(item(
+                        "Remove from collection (Uncollected)",
+                        Action::RemoveCollectionMembership,
+                    ));
+                }
+                rows
+            }
             ClientContextMenuTarget::Workspace { is_git: false, .. } => {
                 vec![item("Rename", Action::Rename), item("Close", Action::Close)]
             }
@@ -126,12 +154,18 @@ impl ClientContextMenuOverlay {
                     Action::ToggleGroup,
                 ),
             ],
-            ClientContextMenuTarget::Tab { .. } => vec![
-                item("New tab", Action::NewTab),
-                item("Rename", Action::Rename),
-                item("Close", Action::Close),
-                item("Add to mission…", Action::AddToMission),
-            ],
+            ClientContextMenuTarget::Tab { mission, .. } => {
+                let mut items = vec![
+                    item("New tab", Action::NewTab),
+                    item("Rename", Action::Rename),
+                    item("Close", Action::Close),
+                    item("Add to mission…", Action::AddToMission),
+                ];
+                if mission.is_some() {
+                    items.push(item("Remove tab from mission…", Action::RemoveTabMission));
+                }
+                items
+            }
             ClientContextMenuTarget::Pane {
                 source_pane_id,
                 has_manual_label,
@@ -164,6 +198,11 @@ impl ClientContextMenuOverlay {
                         items.push(item(
                             &format!("Clear override (inherit {})", context.inherited),
                             Action::ClearPaneMissionOverride,
+                        ));
+                    } else if context.inherited_tab.is_some() {
+                        items.push(item(
+                            "Remove inherited tab membership…",
+                            Action::RemoveInheritedTabMission,
                         ));
                     }
                 }
@@ -289,6 +328,18 @@ impl ClientShellState {
                 workspace_id: tab.workspace_id.clone(),
                 mission_context: self
                     .navigation_target(&self.active_endpoint_id, &tab.workspace_id),
+                mission: self
+                    .endpoints
+                    .iter()
+                    .find(|e| e.endpoint_id == self.active_endpoint_id)
+                    .and_then(|e| e.organization.as_ref())
+                    .and_then(|c| {
+                        c.organization
+                            .mission_for(&crate::organization::MissionTarget::Tab {
+                                tab_id: tab.tab_id.clone(),
+                            })
+                    })
+                    .cloned(),
             },
             x,
             y,
@@ -419,21 +470,38 @@ impl ClientShellState {
                 }
             }
 
-            ClientContextMenuTarget::Missions { missions } => {
+            ClientContextMenuTarget::MissionMaintenance { capture } => match action {
+                ClientContextMenuAction::RenameMission => {
+                    self.open_mission_rename(capture, outcome)
+                }
+                ClientContextMenuAction::EditMissionObjective => {
+                    self.open_mission_objective(capture, outcome)
+                }
+                ClientContextMenuAction::OrganizationEarlier => {
+                    self.move_organization_mission(capture, false, outcome)
+                }
+                ClientContextMenuAction::OrganizationLater => {
+                    self.move_organization_mission(capture, true, outcome)
+                }
+                ClientContextMenuAction::DeleteOrganization => {
+                    self.confirm_mission_delete(capture, outcome)
+                }
+                ClientContextMenuAction::OrganizationInfo => {
+                    self.organization_information(false, outcome)
+                }
+                _ => {}
+            },
+            ClientContextMenuTarget::Missions {
+                missions,
+                endpoint_id,
+                boot_id,
+                generation,
+            } => {
                 match action {
                     ClientContextMenuAction::NewMission => self.open_new_mission(outcome),
                     ClientContextMenuAction::MissionDefinition(index) => {
-                        if let Some((mission, count)) = missions.get(index) {
-                            // Definitions are inspectable before member navigation is introduced.
-                            self.overlay =
-                                Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
-                                    target: ClientContextMenuTarget::Missions {
-                                        missions: vec![(mission.clone(), *count)],
-                                    },
-                                    x: menu.x,
-                                    y: menu.y,
-                                    highlighted: 1,
-                                }));
+                        if let Some((mission, _)) = missions.get(index) {
+                            self.open_mission_definition_menu(super::organization_maintenance::OrganizationCapture{endpoint_id,boot_id,generation,subject:super::organization_maintenance::OrganizationSubject::Mission(mission.id.clone())},menu.x,menu.y,outcome);
                         }
                     }
                     _ => {}
@@ -447,6 +515,60 @@ impl ClientShellState {
                 collection_id,
                 hibernating,
             } => {
+                if action == ClientContextMenuAction::OrganizationInfo {
+                    self.organization_information(true, outcome);
+                    return;
+                }
+                if matches!(
+                    action,
+                    ClientContextMenuAction::OrganizationEarlier
+                        | ClientContextMenuAction::OrganizationLater
+                ) {
+                    self.move_organization_collection(
+                        super::organization_maintenance::OrganizationCapture {
+                            endpoint_id,
+                            boot_id,
+                            generation,
+                            subject:
+                                super::organization_maintenance::OrganizationSubject::Collection(
+                                    collection_id,
+                                ),
+                        },
+                        action == ClientContextMenuAction::OrganizationLater,
+                        outcome,
+                    );
+                    return;
+                }
+                if action == ClientContextMenuAction::DeleteOrganization {
+                    self.confirm_collection_delete(
+                        super::organization_maintenance::OrganizationCapture {
+                            endpoint_id,
+                            boot_id,
+                            generation,
+                            subject:
+                                super::organization_maintenance::OrganizationSubject::Collection(
+                                    collection_id,
+                                ),
+                        },
+                        outcome,
+                    );
+                    return;
+                }
+                if action == ClientContextMenuAction::RenameCollection {
+                    self.open_collection_rename(
+                        super::organization_maintenance::OrganizationCapture {
+                            endpoint_id,
+                            boot_id,
+                            generation,
+                            subject:
+                                super::organization_maintenance::OrganizationSubject::Collection(
+                                    collection_id,
+                                ),
+                        },
+                        outcome,
+                    );
+                    return;
+                }
                 let valid = endpoint_id == self.active_endpoint_id
                     && self
                         .endpoints
@@ -489,11 +611,36 @@ impl ClientShellState {
             ClientContextMenuTarget::CollectionPicker {
                 workspace,
                 family_id,
+                current_collection,
                 collections,
             } => {
                 if self.navigation_target_valid(&workspace)
                     && workspace.endpoint_id == self.active_endpoint_id
                 {
+                    if action == ClientContextMenuAction::RemoveCollectionMembership {
+                        if let Some(expected) = current_collection {
+                            let current = self
+                                .endpoints
+                                .iter()
+                                .find(|e| e.endpoint_id == workspace.endpoint_id)
+                                .and_then(|e| e.organization.as_ref())
+                                .and_then(|c| c.organization.collection_for(&family_id));
+                            if current == Some(&expected) {
+                                self.push_endpoint_method(
+                                    crate::api::schema::Method::CollectionUnassignFamily(
+                                        crate::api::schema::CollectionUnassignFamilyParams {
+                                            family_id,
+                                            collection_id: expected,
+                                        },
+                                    ),
+                                    outcome,
+                                );
+                            } else {
+                                self.maintenance_stale(outcome);
+                            }
+                        }
+                        return;
+                    }
                     if let ClientContextMenuAction::AssignCollection(index) = action {
                         if let Some(collection) = collections.get(index) {
                             self.push_endpoint_method(
@@ -525,8 +672,26 @@ impl ClientShellState {
                 tab_id,
                 workspace_id,
                 mission_context,
+                mission,
             } => {
-                if action == ClientContextMenuAction::AddToMission {
+                if action == ClientContextMenuAction::RemoveTabMission {
+                    if mission_context.as_ref().is_some_and(|w| {
+                        self.navigation_target_valid(w) && w.endpoint_id == self.active_endpoint_id
+                    }) {
+                        if let Some(mission_id) = mission {
+                            if let Some(capture) = self.capture_organization_subject(
+                                super::organization_maintenance::OrganizationSubject::Tab {
+                                    tab_id,
+                                    mission_id,
+                                },
+                            ) {
+                                self.confirm_tab_mission_removal(capture, outcome);
+                            }
+                        }
+                    } else {
+                        self.maintenance_stale(outcome);
+                    }
+                } else if action == ClientContextMenuAction::AddToMission {
                     if let Some(workspace) = mission_context.filter(|context| {
                         self.navigation_target_valid(context)
                             && context.endpoint_id == self.active_endpoint_id
@@ -557,6 +722,9 @@ impl ClientShellState {
                 }
                 (ClientContextMenuAction::ClearPaneMissionOverride, Some(context)) => {
                     self.submit_pane_mission(context, None, outcome)
+                }
+                (ClientContextMenuAction::RemoveInheritedTabMission, Some(context)) => {
+                    self.remove_inherited_pane_mission(context, outcome)
                 }
                 (ClientContextMenuAction::PaneMissionInfo, Some(context)) => {
                     outcome.repaint |= self.push_endpoint_notice(

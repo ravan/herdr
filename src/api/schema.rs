@@ -77,6 +77,22 @@ pub enum Method {
     ClientShellSurfaceSet(ClientShellSurfaceSetParams),
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(EmptyParams),
+    #[serde(rename = "mission.rename")]
+    MissionRename(MissionRenameParams),
+    #[serde(rename = "collection.move")]
+    CollectionMove(CollectionMoveParams),
+    #[serde(rename = "mission.move")]
+    MissionMove(MissionMoveParams),
+    #[serde(rename = "mission.set_objective")]
+    MissionSetObjective(MissionSetObjectiveParams),
+    #[serde(rename = "collection.delete")]
+    CollectionDelete(CollectionDeleteParams),
+    #[serde(rename = "collection.unassign_family")]
+    CollectionUnassignFamily(CollectionUnassignFamilyParams),
+    #[serde(rename = "mission.unassign")]
+    MissionUnassign(MissionUnassignParams),
+    #[serde(rename = "mission.delete")]
+    MissionDelete(MissionDeleteParams),
     #[serde(rename = "organization.get")]
     OrganizationGet(EmptyParams),
     #[serde(rename = "mission.create")]
@@ -87,6 +103,8 @@ pub enum Method {
     MissionAssignPane(MissionAssignPaneParams),
     #[serde(rename = "mission.clear_pane_override")]
     MissionClearPaneOverride(MissionClearPaneOverrideParams),
+    #[serde(rename = "collection.rename")]
+    CollectionRename(CollectionRenameParams),
     #[serde(rename = "collection.create")]
     CollectionCreate(CollectionCreateParams),
     #[serde(rename = "collection.assign_family")]

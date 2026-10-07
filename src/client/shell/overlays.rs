@@ -1279,14 +1279,25 @@ fn render_confirm_close_overlay(
             .bg(p.panel_bg)
             .add_modifier(Modifier::BOLD),
     );
-    put_text(
-        b,
-        i.x,
-        i.y + 1,
-        i.width,
-        &format!(" {}", c.detail),
-        Style::default().fg(p.text).bg(p.panel_bg),
-    );
+    if c.organization.is_some() {
+        use ratatui::widgets::{Paragraph, Widget, Wrap};
+        Paragraph::new(c.detail.as_str())
+            .style(Style::default().fg(p.text).bg(p.panel_bg))
+            .wrap(Wrap { trim: true })
+            .render(
+                Rect::new(i.x.saturating_add(1), i.y + 1, i.width.saturating_sub(1), 2),
+                b,
+            );
+    } else {
+        put_text(
+            b,
+            i.x,
+            i.y + 1,
+            i.width,
+            &format!(" {}", c.detail),
+            Style::default().fg(p.text).bg(p.panel_bg),
+        );
+    }
     let rs = row(i, &[13, 12], 2, 3);
     let [ok, cancel] = rs.as_slice() else {
         return None;

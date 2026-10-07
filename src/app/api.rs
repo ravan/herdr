@@ -1041,7 +1041,28 @@ impl App {
                 return self.handle_mission_clear_pane_override(request.id, params)
             }
             Method::MissionAssign(params) => return self.handle_mission_assign(request.id, params),
+            Method::MissionRename(params) => return self.handle_mission_rename(request.id, params),
+            Method::CollectionMove(params) => {
+                return self.handle_collection_move(request.id, params)
+            }
+            Method::MissionMove(params) => return self.handle_mission_move(request.id, params),
+            Method::MissionSetObjective(params) => {
+                return self.handle_mission_set_objective(request.id, params)
+            }
+            Method::CollectionDelete(params) => {
+                return self.handle_collection_delete(request.id, params)
+            }
+            Method::CollectionUnassignFamily(params) => {
+                return self.handle_collection_unassign_family(request.id, params)
+            }
+            Method::MissionUnassign(params) => {
+                return self.handle_mission_unassign(request.id, params)
+            }
+            Method::MissionDelete(params) => return self.handle_mission_delete(request.id, params),
             Method::OrganizationGet(_) => return self.handle_organization_get(request.id),
+            Method::CollectionRename(params) => {
+                return self.handle_collection_rename(request.id, params)
+            }
             Method::CollectionCreate(params) => {
                 return self.handle_collection_create(request.id, params)
             }

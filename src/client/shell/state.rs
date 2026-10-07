@@ -301,6 +301,9 @@ pub(super) enum ClientShellOverlayKind {
 
 #[derive(Debug)]
 pub(super) enum ClientRenameTarget {
+    Collection(super::organization_maintenance::OrganizationCapture),
+    Mission(super::organization_maintenance::OrganizationCapture),
+    MissionObjective(super::organization_maintenance::OrganizationCapture),
     NewCollection,
     NewMission {
         endpoint_id: ClientEndpointId,
@@ -528,13 +531,23 @@ pub(super) enum ClientContextMenuAction {
     AddToMission,
     AssignPaneMission,
     ClearPaneMissionOverride,
+    RemoveInheritedTabMission,
+    RemoveTabMission,
     PaneMissionInfo,
     AssignMission(usize),
     NewMission,
     MissionDefinition(usize),
+    OrganizationInfo,
+    DeleteOrganization,
+    EditMissionObjective,
+    RenameMission,
+    RenameCollection,
+    OrganizationEarlier,
+    OrganizationLater,
     SetHibernating,
     MoveFamilyToCollection,
     AssignCollection(usize),
+    RemoveCollectionMembership,
     Rename,
     Close,
     NewWorktree,
@@ -568,6 +581,12 @@ pub(super) enum ClientContextMenuTarget {
     },
     Missions {
         missions: Vec<(crate::organization::Mission, usize)>,
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+    },
+    MissionMaintenance {
+        capture: super::organization_maintenance::OrganizationCapture,
     },
     MissionPicker {
         workspace: WorkspaceNavigationTarget,
@@ -584,6 +603,7 @@ pub(super) enum ClientContextMenuTarget {
     CollectionPicker {
         workspace: WorkspaceNavigationTarget,
         family_id: crate::organization::FamilyId,
+        current_collection: Option<crate::organization::CollectionId>,
         collections: Vec<crate::organization::Collection>,
     },
     Workspace {
@@ -598,6 +618,7 @@ pub(super) enum ClientContextMenuTarget {
         tab_id: String,
         workspace_id: String,
         mission_context: Option<WorkspaceNavigationTarget>,
+        mission: Option<crate::organization::MissionId>,
     },
     Pane {
         pane_id: String,
@@ -633,6 +654,7 @@ pub(super) struct ClientConfirmCloseOverlay {
     pub(super) workspace_id: String,
     pub(super) close_group: bool,
     pub(super) tab_target: Option<ClientTabCloseConfirmation>,
+    pub(super) organization: Option<super::organization_maintenance::OrganizationCapture>,
     pub(super) title: String,
     pub(super) detail: String,
 }

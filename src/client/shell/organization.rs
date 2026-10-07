@@ -152,7 +152,20 @@ impl ClientShellState {
             })
             .unwrap_or_default();
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
-            target: ClientContextMenuTarget::Missions { missions },
+            target: ClientContextMenuTarget::Missions {
+                missions,
+                endpoint_id: self.active_endpoint_id.clone(),
+                boot_id: self
+                    .snapshot
+                    .as_ref()
+                    .map(|s| s.boot_id.clone())
+                    .unwrap_or_default(),
+                generation: self
+                    .endpoints
+                    .iter()
+                    .find(|e| e.endpoint_id == self.active_endpoint_id)
+                    .and_then(|e| e.snapshot_generation),
+            },
             x: self.hits.workspace_body.x,
             y: self.hits.workspace_body.y,
             highlighted: 0,
@@ -259,10 +272,18 @@ impl ClientShellState {
             );
             return;
         }
+        let current_collection = self
+            .endpoints
+            .iter()
+            .find(|e| e.endpoint_id == self.active_endpoint_id)
+            .and_then(|e| e.organization.as_ref())
+            .and_then(|c| c.organization.collection_for(&family_id))
+            .cloned();
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::CollectionPicker {
                 workspace,
                 family_id,
+                current_collection,
                 collections,
             },
             x: self.hits.workspace_body.x,

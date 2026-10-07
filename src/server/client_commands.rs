@@ -16,7 +16,11 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "client_shell.surface.set",
     "collection.assign_family",
     "collection.create",
+    "collection.delete",
+    "collection.move",
+    "collection.rename",
     "collection.set_hibernating",
+    "collection.unassign_family",
     "command.invoke",
     "integration.install",
     "integration.list",
@@ -25,6 +29,11 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "mission.assign_pane",
     "mission.clear_pane_override",
     "mission.create",
+    "mission.delete",
+    "mission.move",
+    "mission.rename",
+    "mission.set_objective",
+    "mission.unassign",
     "organization.get",
     "pane.clear",
     "pane.close",
@@ -299,6 +308,42 @@ mod tests {
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
         for (method, digest) in [
+            (
+                "collection.delete",
+                "2c4a5f4fda2da89d49dc4f5434b4d0113ac565ba755b01274ac9be959195c5f5",
+            ),
+            (
+                "collection.move",
+                "0947a79fe7a77a3c99ef6307ff1da176aaa9c3ad39eb7223290b6576d558f396",
+            ),
+            (
+                "collection.rename",
+                "84718114abb0ae5bbe59b49245c1b40f33cb99ef56845aa52cb5730f31b54572",
+            ),
+            (
+                "collection.unassign_family",
+                "b91fdd28a9ecc85f7ced5820ef3ebd5ba19d149be3c80e53adde2e999a9d334f",
+            ),
+            (
+                "mission.delete",
+                "34127e9e370fbfee640f5e70a72410aa7defa7c12c86575b904d6c0d03c8bf8f",
+            ),
+            (
+                "mission.move",
+                "5286b129984963ac9c48911cc8f9d8c1de10ebb869578a423f75bf6017d94267",
+            ),
+            (
+                "mission.rename",
+                "2300234fcfe223894b0e3095240d41ac0767a7e111638719c0c6db6f2d49e58d",
+            ),
+            (
+                "mission.set_objective",
+                "d2849d42a0f38b2d09b581b46ba5890331564f9c005b085515ce05c535593d25",
+            ),
+            (
+                "mission.unassign",
+                "fe4853bffcb08fe9119245dd696259174afd3558664ea274ecbeb72baa975808",
+            ),
             (
                 "worktree.create_in_mission",
                 "972e67434ba65940f77fc79d7247ae5c2cde25831441d26ab3981afbdc2fdbaa",

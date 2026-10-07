@@ -960,3 +960,30 @@ The numbered binary protocol remains for same-install and internal operations,
 including direct terminal attach and live handoff. Check `ping` or `herdr status`
 before using those operations across different builds. JSON API clients should
 ignore unknown fields and handle unsupported methods as normal errors.
+
+## Organization maintenance
+
+Each maintenance method is advertised independently and returns the existing `organization` result with the confirmed catalog and revision. Old method shapes and endpoint codecs stay unchanged. Use IDs from `organization.get`, `workspace.list`, `tab.list`, and `pane.list`.
+
+Names must contain visible text after trimming. A move uses an absolute, zero-based `to_index` within the complete collection or mission catalog, including parked collections. Successful moves preserve the relative order of other definitions; deletion makes the remaining order dense. Same-value edits and removal of an already-unassigned live target do not change the revision. Unknown IDs, invalid indices, changed membership, or exhausted revision capacity return errors without changing state.
+
+`mission.set_objective` requires the `objective` key: a string edits it, explicit `null` clears it, and omission is rejected. Empty or whitespace-only strings also clear it. Unassignment requires the expected current collection or mission ID, so a stale command cannot remove a newer assignment (`assignment_changed`). Family unassignment requires an exact live family. Definition deletion also clears retained family references or explicit tab/pane assignments owned by that definition. Terminals, running processes, checkouts, and focus remain intact.
+
+| Method | Required parameters |
+| --- | --- |
+| `collection.rename` | `collection_id`, `name` |
+| `collection.move` | `collection_id`, `to_index` |
+| `collection.delete` | `collection_id` |
+| `collection.unassign_family` | `family_id`, `collection_id` |
+| `mission.rename` | `mission_id`, `name` |
+| `mission.move` | `mission_id`, `to_index` |
+| `mission.set_objective` | `mission_id`, `objective` (nullable) |
+| `mission.delete` | `mission_id` |
+| `mission.unassign` | `target` (tab), `mission_id` |
+
+```json
+{"id":"move","method":"mission.move","params":{"mission_id":"mission_1","to_index":0}}
+{"id":"clear_objective","method":"mission.set_objective","params":{"mission_id":"mission_1","objective":null}}
+{"id":"remove_member","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"uncollect","method":"collection.unassign_family","params":{"family_id":{"kind":"managed","key":"repository-family-key"},"collection_id":"collection_1"}}
+```

@@ -388,6 +388,15 @@ impl ClientShellState {
         let hibernate_advertised = !matches!(
             method,
             crate::api::schema::Method::CollectionSetHibernating(_)
+                | crate::api::schema::Method::CollectionRename(_)
+                | crate::api::schema::Method::CollectionMove(_)
+                | crate::api::schema::Method::CollectionDelete(_)
+                | crate::api::schema::Method::CollectionUnassignFamily(_)
+                | crate::api::schema::Method::MissionRename(_)
+                | crate::api::schema::Method::MissionMove(_)
+                | crate::api::schema::Method::MissionSetObjective(_)
+                | crate::api::schema::Method::MissionDelete(_)
+                | crate::api::schema::Method::MissionUnassign(_)
                 | crate::api::schema::Method::MissionCreate(_)
                 | crate::api::schema::Method::MissionAssignPane(_)
                 | crate::api::schema::Method::MissionClearPaneOverride(_)

@@ -8,6 +8,8 @@ pub(super) struct PaneMissionMenuContext {
     pub(super) membership: String,
     pub(super) inherited: String,
     pub(super) explicit: bool,
+    pub(super) pane_override: Option<crate::organization::MissionId>,
+    pub(super) inherited_tab: Option<(String, crate::organization::MissionId)>,
 }
 
 impl ClientShellState {
@@ -33,6 +35,21 @@ impl ClientShellState {
                 .and_then(|m| m.inherited_label.clone())
                 .unwrap_or_else(|| "Unassigned".into()),
             explicit: membership.is_some_and(|m| m.explicit),
+            pane_override: endpoint
+                .organization
+                .as_ref()
+                .and_then(|c| c.organization.pane_override(pane_id))
+                .cloned(),
+            inherited_tab: endpoint
+                .organization
+                .as_ref()
+                .and_then(|c| {
+                    c.organization
+                        .mission_for(&crate::organization::MissionTarget::Tab {
+                            tab_id: pane.tab_id.clone(),
+                        })
+                })
+                .map(|id| (pane.tab_id.clone(), id.clone())),
         })
     }
 
@@ -123,6 +140,18 @@ impl ClientShellState {
                 return;
             }
         }
+        if mission.is_none() {
+            let current = self
+                .endpoints
+                .iter()
+                .find(|e| e.endpoint_id == self.active_endpoint_id)
+                .and_then(|e| e.organization.as_ref())
+                .and_then(|c| c.organization.pane_override(&context.pane_id));
+            if current != context.pane_override.as_ref() {
+                self.stale_pane_mission(outcome);
+                return;
+            }
+        }
         let method = match mission {
             Some(mission_id) => crate::api::schema::Method::MissionAssignPane(
                 crate::api::schema::MissionAssignPaneParams {
@@ -137,6 +166,48 @@ impl ClientShellState {
             ),
         };
         self.push_endpoint_method(method, outcome);
+    }
+
+    pub(super) fn remove_inherited_pane_mission(
+        &mut self,
+        context: PaneMissionMenuContext,
+        outcome: &mut ClientShellInput,
+    ) {
+        let Some((tab_id, mission_id)) = context.inherited_tab.as_ref() else {
+            self.stale_pane_mission(outcome);
+            return;
+        };
+        let valid = self.pane_mission_context_valid(&context)
+            && self
+                .endpoints
+                .iter()
+                .find(|e| e.endpoint_id == context.workspace.endpoint_id)
+                .is_some_and(|e| {
+                    e.snapshot.as_ref().is_some_and(|s| {
+                        s.panes
+                            .iter()
+                            .any(|p| p.pane_id == context.pane_id && &p.tab_id == tab_id)
+                    }) && e.organization.as_ref().is_some_and(|c| {
+                        c.organization.pane_override(&context.pane_id).is_none()
+                            && c.organization.mission_for(
+                                &crate::organization::MissionTarget::Tab {
+                                    tab_id: tab_id.clone(),
+                                },
+                            ) == Some(mission_id)
+                    })
+                });
+        if !valid {
+            self.stale_pane_mission(outcome);
+            return;
+        }
+        if let Some(capture) = self.capture_organization_subject(
+            super::organization_maintenance::OrganizationSubject::Tab {
+                tab_id: tab_id.clone(),
+                mission_id: mission_id.clone(),
+            },
+        ) {
+            self.confirm_tab_mission_removal(capture, outcome);
+        }
     }
 
     fn stale_pane_mission(&mut self, outcome: &mut ClientShellInput) {

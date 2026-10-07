@@ -108,6 +108,7 @@ pub(super) fn project_missions(endpoint: &ClientShellEndpoint) -> Vec<SpaceRow> 
         .collect::<HashMap<_, _>>();
     let mut rows = Vec::new();
     for mission in missions {
+        let beginning = rows.len();
         let objective = mission.objective.as_deref().unwrap_or_default();
         rows.push(SpaceRow {
             label: mission.name.as_str().into(),
@@ -228,6 +229,19 @@ pub(super) fn project_missions(endpoint: &ClientShellEndpoint) -> Vec<SpaceRow> 
                 ),
                 section: None,
                 parked: parked(catalog, workspace),
+                family_key: None,
+            });
+        }
+        if rows.len() == beginning + 1 {
+            rows.push(SpaceRow {
+                label: "Empty mission".into(),
+                detail: "Assign existing tab or pane from its menu; ctrl+n creates worktree".into(),
+                depth: 1,
+                search: format!("{} {} {objective}", mission.name.as_str(), mission.id.0)
+                    .to_lowercase(),
+                selection: None,
+                section: None,
+                parked: false,
                 family_key: None,
             });
         }

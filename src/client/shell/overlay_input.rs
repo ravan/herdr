@@ -885,10 +885,13 @@ impl ClientShellState {
             if key.code == KeyCode::Enter {
                 self.accept_close_confirmation(outcome);
             } else if key.code == KeyCode::Esc {
+                let metadata = matches!(self.overlay.as_ref(),Some(ClientShellOverlay::ConfirmClose(c)) if c.organization.is_some());
                 self.overlay = None;
-                self.mode = ClientShellMode::Navigate;
-                self.navigate_workspace_id = self.focused_navigation_target();
-                self.reveal_navigation_workspace = true;
+                if !metadata {
+                    self.mode = ClientShellMode::Navigate;
+                    self.navigate_workspace_id = self.focused_navigation_target();
+                    self.reveal_navigation_workspace = true;
+                }
                 outcome.repaint = true;
             }
             return;
@@ -935,6 +938,61 @@ impl ClientShellState {
         };
         let trimmed = rename.input.trim();
         let method = match rename.target {
+            ClientRenameTarget::Collection(capture) => {
+                if !self.organization_capture_valid(&capture) {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
+                let super::organization_maintenance::OrganizationSubject::Collection(collection_id) =
+                    capture.subject
+                else {
+                    return;
+                };
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::CollectionRename(
+                        crate::api::schema::CollectionRenameParams {
+                            collection_id,
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
+            ClientRenameTarget::MissionObjective(capture) => {
+                if !self.organization_capture_valid(&capture) {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
+                let super::organization_maintenance::OrganizationSubject::Mission(mission_id) =
+                    capture.subject
+                else {
+                    return;
+                };
+                Some(crate::api::schema::Method::MissionSetObjective(
+                    crate::api::schema::MissionSetObjectiveParams {
+                        mission_id,
+                        objective: (!trimmed.is_empty()).then(|| rename.input.to_string()),
+                    },
+                ))
+            }
+            ClientRenameTarget::Mission(capture) => {
+                if !self.organization_capture_valid(&capture) {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
+                let super::organization_maintenance::OrganizationSubject::Mission(mission_id) =
+                    capture.subject
+                else {
+                    return;
+                };
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::MissionRename(
+                        crate::api::schema::MissionRenameParams {
+                            mission_id,
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
             ClientRenameTarget::NewMission {
                 endpoint_id,
                 boot_id,
@@ -1083,6 +1141,10 @@ impl ClientShellState {
             return;
         };
         outcome.repaint = true;
+        if let Some(capture) = confirm.organization {
+            self.submit_organization_delete(capture, outcome);
+            return;
+        }
         let method = if let Some(target) = confirm.tab_target {
             if target.workspace.endpoint_id != self.active_endpoint_id
                 || !self.navigation_target_valid(&target.workspace)
@@ -1192,6 +1254,7 @@ impl ClientShellState {
                 workspace_id,
                 close_group: closes_group,
                 tab_target,
+                organization: None,
                 title: if closes_group {
                     "Close worktree group?".to_owned()
                 } else {

@@ -997,11 +997,7 @@ fn mission_client() -> ClientShellState {
 }
 fn click_menu_label(state: &mut ClientShellState, label: &str, global: bool) -> ClientShellInput {
     let frame = state.compose(106, 30).unwrap();
-    let row = frame_rows(&frame)
-        .iter()
-        .position(|row| row.contains(label))
-        .unwrap_or_else(|| panic!("missing {label}: {:?}", frame_rows(&frame)))
-        as u16;
+    let rows = frame_rows(&frame);
     let hits = if global {
         &state.hits.global_menu_rows
     } else {
@@ -1009,8 +1005,11 @@ fn click_menu_label(state: &mut ClientShellState, label: &str, global: bool) -> 
     };
     let rect = hits
         .iter()
-        .find(|(rect, _)| rect.y == row)
-        .expect("clickable menu item")
+        .find(|(rect, _)| {
+            rows.get(rect.y as usize)
+                .is_some_and(|row| row.contains(label))
+        })
+        .unwrap_or_else(|| panic!("missing menu {label}: {rows:?}"))
         .0;
     click(state, rect)
 }
@@ -1608,4 +1607,540 @@ fn mc_s4_parked_mission_agents_remain_visible_and_focus_reveals_exact_target() {
             .collections[0]
             .hibernating
     );
+}
+
+fn maintenance_client() -> ClientShellState {
+    let mut state = mission_client();
+    state.set_endpoint_methods(Some(
+        [
+            "organization.get",
+            "collection.create",
+            "collection.assign_family",
+            "collection.set_hibernating",
+            "collection.rename",
+            "collection.move",
+            "collection.delete",
+            "collection.unassign_family",
+            "mission.create",
+            "mission.assign",
+            "mission.assign_pane",
+            "mission.clear_pane_override",
+            "mission.rename",
+            "mission.move",
+            "mission.set_objective",
+            "mission.delete",
+            "mission.unassign",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+    ));
+    let catalog=serde_json::from_value(serde_json::json!({"boot_id":"boot-1","organization":{"revision":2,
+        "collections":[{"id":"collection_1","name":"Collection","order":0,"hibernating":false},{"id":"collection_2","name":"Second","order":1,"hibernating":true}],
+        "missions":[{"id":"mission_1","name":"Tako platform","objective":"Old objective","order":0},{"id":"mission_2","name":"Other","order":1}],
+        "mission_assignments":[{"target":{"kind":"tab","tab_id":"tab_1"},"mission_id":"mission_1"}]}})).unwrap();
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    state
+}
+fn right_click_collection(state: &mut ClientShellState) {
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .collections
+        .iter()
+        .find(|(_, _, id)| id.0 == "collection_1")
+        .unwrap()
+        .0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+}
+#[test]
+fn mc_s8_native_collection_rename_captures_id_and_keeps_editor_input_from_terminal() {
+    let mut state = maintenance_client();
+    right_click_collection(&mut state);
+    let start = click_menu_label(&mut state, "Rename collection", false);
+    assert!(start.actions.is_empty());
+    assert!(state.handle_input_bytes(b"\x15Renamed").actions.is_empty());
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("rename endpoint request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"collection.rename","params":{"collection_id":"collection_1","name":"Renamed"}})
+    );
+    assert_eq!(
+        state.endpoints[0]
+            .organization
+            .as_ref()
+            .unwrap()
+            .organization
+            .collections[0]
+            .name
+            .as_str(),
+        "Collection",
+        "confirmed metadata waits for reply"
+    );
+}
+
+#[test]
+fn mc_s8_native_collection_order_moves_metadata_only() {
+    let mut state = maintenance_client();
+    right_click_collection(&mut state);
+    let before = state.snapshot.clone();
+    let submit = click_menu_label(&mut state, "Move later", false);
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("order endpoint request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"collection.move","params":{"collection_id":"collection_1","to_index":1}})
+    );
+    assert_eq!(state.snapshot, before);
+    assert_eq!(
+        state.endpoints[0]
+            .organization
+            .as_ref()
+            .unwrap()
+            .organization
+            .collections[0]
+            .order,
+        0
+    );
+}
+
+#[test]
+fn mc_s8_native_collection_delete_confirms_metadata_only_and_rejects_other_client_deletion() {
+    let mut state = maintenance_client();
+    let before = state.snapshot.clone();
+    right_click_collection(&mut state);
+    assert!(click_menu_label(&mut state, "Delete collection", false)
+        .actions
+        .is_empty());
+    let text = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(
+        text.contains("Uncollected") && text.contains("stay open"),
+        "{text}"
+    );
+    assert!(state.handle_input_bytes(b"\x1b").actions.is_empty());
+    assert_eq!(state.snapshot, before);
+    right_click_collection(&mut state);
+    click_menu_label(&mut state, "Delete collection", false);
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("collection deletion")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"collection.delete","params":{"collection_id":"collection_1"}})
+    );
+    assert_eq!(state.snapshot, before);
+    // Separate fresh client holds a confirmation while another client removes the exact ID.
+    let mut state = maintenance_client();
+    right_click_collection(&mut state);
+    click_menu_label(&mut state, "Delete collection", false);
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.organization.revision += 1;
+    catalog.organization.collections.remove(0);
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    assert!(state.handle_input_bytes(b"\r").actions.is_empty());
+    state.handle_input_bytes(b"typing");
+    assert!(frame_rows(&state.compose(106, 30).unwrap())
+        .join("\n")
+        .contains("Action unavailable"));
+}
+
+fn open_mission_definition(state: &mut ClientShellState) {
+    state.compose(106, 30).unwrap();
+    let launcher = state.hits.global_launcher;
+    click(state, launcher);
+    click_menu_label(state, "Missions", true);
+    click_menu_label(state, "Tako platform", false);
+}
+#[test]
+fn mc_s8_native_mission_rename_reaches_exact_definition_from_global_menu() {
+    let mut state = maintenance_client();
+    open_mission_definition(&mut state);
+    click_menu_label(&mut state, "Rename mission", false);
+    assert!(state
+        .handle_input_bytes(b"\x15Renamed mission")
+        .actions
+        .is_empty());
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("mission rename endpoint request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"mission.rename","params":{"mission_id":"mission_1","name":"Renamed mission"}})
+    );
+}
+
+#[test]
+fn mc_s8_native_mission_objective_can_be_cleared_without_deleting_definition() {
+    let mut state = maintenance_client();
+    open_mission_definition(&mut state);
+    click_menu_label(&mut state, "Edit objective", false);
+    assert!(state.handle_input_bytes(b"\x15").actions.is_empty());
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("objective edit endpoint request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"mission.set_objective","params":{"mission_id":"mission_1","objective":null}})
+    );
+    assert_eq!(
+        state.endpoints[0]
+            .organization
+            .as_ref()
+            .unwrap()
+            .organization
+            .missions[0]
+            .objective
+            .as_deref(),
+        Some("Old objective")
+    );
+}
+
+#[test]
+fn mc_s8_native_mission_order_and_delete_are_metadata_actions_with_confirmation() {
+    let mut state = maintenance_client();
+    open_mission_definition(&mut state);
+    let submit = click_menu_label(&mut state, "Move later", false);
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("mission order request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"mission.move","params":{"mission_id":"mission_1","to_index":1}})
+    );
+    let mut state = maintenance_client();
+    let before = state.snapshot.clone();
+    open_mission_definition(&mut state);
+    assert!(click_menu_label(&mut state, "Delete mission", false)
+        .actions
+        .is_empty());
+    let frame = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(
+        frame.contains("Assignments cleared") && frame.contains("terminals stay open"),
+        "{frame}"
+    );
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("mission delete request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"mission.delete","params":{"mission_id":"mission_1"}})
+    );
+    assert_eq!(state.snapshot, before);
+}
+
+#[test]
+fn mc_s8_inherited_pane_removal_names_tab_wide_effect_and_confirms_exact_tab_membership() {
+    let mut state = maintenance_client();
+    state.cache_endpoint_snapshot_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        Box::new(mc_s4_agents_snapshot()),
+    );
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut current = surface();
+    current.projection_revision = 2;
+    state.set_pane_surface(current);
+    state.config.agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, _, id)| id == "pane_2")
+        .unwrap()
+        .0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(
+        click_menu_label(&mut state, "Remove inherited tab membership", false)
+            .actions
+            .is_empty()
+    );
+    let text = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(
+        text.contains("tab_1")
+            && text.contains("All inherited panes")
+            && text.contains("overrides stay"),
+        "{text}"
+    );
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("tab membership removal")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"tab_1"},"mission_id":"mission_1"}})
+    );
+}
+
+#[test]
+fn mc_s8_family_unassignment_uses_captured_collection_without_closing_workspace() {
+    let mut state = maintenance_client();
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.organization.revision += 1;
+    catalog
+        .organization
+        .family_assignments
+        .push(crate::organization::FamilyAssignment {
+            family_id: crate::organization::FamilyId::Standalone {
+                workspace_id: "ws_1".into(),
+            },
+            collection_id: crate::organization::CollectionId("collection_1".into()),
+        });
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    state.compose(106, 40).unwrap();
+    let rect = state.hits.workspaces[0].rect;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    click_menu_label(&mut state, "Move family to collection", false);
+    let before = state.snapshot.clone();
+    let submit = click_menu_label(&mut state, "Remove from collection", false);
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("family unassignment request")
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"collection.unassign_family","params":{"family_id":{"kind":"standalone","workspace_id":"ws_1"},"collection_id":"collection_1"}})
+    );
+    assert_eq!(state.snapshot, before);
+}
+
+#[test]
+fn mc_s8_tab_menu_removal_captures_expected_mission_and_rejects_reassignment() {
+    let mut state = maintenance_client();
+    state.compose(106, 30).unwrap();
+    let rect = state.hits.tabs[0].0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.organization.revision += 1;
+    catalog.organization.mission_assignments[0].mission_id =
+        crate::organization::MissionId("mission_2".into());
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    let input = click_menu_label(&mut state, "Remove tab from mission", false);
+    assert!(input.actions.is_empty());
+    assert!(
+        state.overlay.is_none(),
+        "stale ownership must not produce an actionable confirmation"
+    );
+    state.handle_input_bytes(b"typing");
+    assert!(frame_rows(&state.compose(106, 30).unwrap())
+        .join("\n")
+        .contains("Action unavailable"));
+}
+
+#[test]
+fn mc_s8_missing_maintenance_method_disables_only_that_action_with_persistent_notice() {
+    let mut state = maintenance_client();
+    let methods = state.endpoints[0]
+        .methods
+        .as_ref()
+        .unwrap()
+        .iter()
+        .filter(|m| m.as_str() != "collection.rename")
+        .cloned()
+        .collect();
+    state.set_endpoint_methods(Some(methods));
+    right_click_collection(&mut state);
+    let input = click_menu_label(&mut state, "Rename collection", false);
+    assert!(input.actions.is_empty());
+    assert!(state.overlay.is_none());
+    let typing = state.handle_input_bytes(b"still typing");
+    assert!(typing
+        .requests
+        .iter()
+        .any(|r| matches!(r,ClientMessage::ClientShellPaneInput{pane_id,..} if pane_id=="pane_1")));
+    assert!(frame_rows(&state.compose(106, 30).unwrap())
+        .join("\n")
+        .contains("Action unavailable"));
+}
+
+#[test]
+fn mc_s8_empty_mission_explains_existing_member_actions_and_public_identity_reconciliation() {
+    let mut state = maintenance_client();
+    state.compose(106, 30).unwrap();
+    let launcher = state.hits.global_launcher;
+    click(&mut state, launcher);
+    click_menu_label(&mut state, "Mission control", true);
+    state.handle_input_bytes(b"\tOther");
+    let text = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(
+        text.contains("Empty mission") && text.contains("Assign existing"),
+        "{text}"
+    );
+    state.handle_input_bytes(b"\x1b");
+    open_mission_definition(&mut state);
+    click_menu_label(&mut state, "Membership and restore", false);
+    let text = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(text.contains("Membership and restore"), "{text}");
+    assert!(
+        text.contains("public IDs") && text.contains("unavailable"),
+        "{text}"
+    );
+}
+
+#[test]
+fn mc_s8_metadata_confirmation_cancel_keeps_compact_safety_text_and_original_terminal_input() {
+    let mut state = maintenance_client();
+    right_click_collection(&mut state);
+    click_menu_label(&mut state, "Delete collection", false);
+    let text = frame_rows(&state.compose(50, 14).unwrap()).join("\n");
+    assert!(
+        text.contains("stay open") && text.contains("Uncollected"),
+        "{text}"
+    );
+    assert!(state.handle_input_bytes(b"\x1b").actions.is_empty());
+    let typing = state.handle_input_bytes(b"keep working");
+    assert!(
+        typing.requests.iter().any(
+            |r| matches!(r,ClientMessage::ClientShellPaneInput{pane_id,..} if pane_id=="pane_1")
+        ),
+        "cancel must preserve original input mode"
+    );
+}
+
+#[test]
+fn mc_s8_stale_clear_override_cannot_remove_another_clients_new_mission() {
+    let mut state = maintenance_client();
+    state.cache_endpoint_snapshot_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        Box::new(mc_s4_agents_snapshot()),
+    );
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut current = surface();
+    current.projection_revision = 2;
+    state.set_pane_surface(current);
+    state.config.agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.organization.revision += 1;
+    catalog.organization.pane_mission_assignments.push(
+        crate::organization::PaneMissionAssignment {
+            pane_id: "pane_2".into(),
+            mission_id: crate::organization::MissionId("mission_1".into()),
+        },
+    );
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog.clone());
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, _, id)| id == "pane_2")
+        .unwrap()
+        .0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    catalog.organization.revision += 1;
+    catalog.organization.pane_mission_assignments[0].mission_id =
+        crate::organization::MissionId("mission_2".into());
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+    assert!(click_menu_label(&mut state, "Clear override", false)
+        .actions
+        .is_empty());
+    state.handle_input_bytes(b"typing");
+    assert!(frame_rows(&state.compose(106, 30).unwrap())
+        .join("\n")
+        .contains("unavailable"));
+}
+
+#[test]
+fn mc_s8_inherited_pane_menu_rejects_late_move_or_new_override_before_tab_confirmation() {
+    for change in ["move", "override"] {
+        let mut state = maintenance_client();
+        state.cache_endpoint_snapshot_for_generation(
+            &ClientEndpointId::Local,
+            1,
+            Box::new(mc_s4_agents_snapshot()),
+        );
+        state.activate_endpoint_projection(&ClientEndpointId::Local);
+        let mut current = surface();
+        current.projection_revision = 2;
+        state.set_pane_surface(current);
+        state.config.agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+        state.compose(106, 40).unwrap();
+        let rect = state
+            .hits
+            .endpoint_agents
+            .iter()
+            .find(|(_, _, id)| id == "pane_2")
+            .unwrap()
+            .0;
+        state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        })]);
+        if change == "move" {
+            let mut snap = state.snapshot.as_deref().unwrap().clone();
+            snap.revision += 1;
+            let mut tab = snap.tabs[0].clone();
+            tab.tab_id = "destination".into();
+            tab.focused = false;
+            snap.tabs.push(tab);
+            snap.panes
+                .iter_mut()
+                .find(|p| p.pane_id == "pane_2")
+                .unwrap()
+                .tab_id = "destination".into();
+            state.cache_endpoint_snapshot_for_generation(
+                &ClientEndpointId::Local,
+                1,
+                Box::new(snap),
+            );
+            state.activate_endpoint_projection(&ClientEndpointId::Local);
+            let mut current = surface();
+            current.projection_revision = 3;
+            state.set_pane_surface(current);
+        } else {
+            let mut catalog = state.endpoints[0].organization.clone().unwrap();
+            catalog.organization.revision += 1;
+            catalog.organization.pane_mission_assignments.push(
+                crate::organization::PaneMissionAssignment {
+                    pane_id: "pane_2".into(),
+                    mission_id: crate::organization::MissionId("mission_1".into()),
+                },
+            );
+            state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog);
+        }
+        let input = click_menu_label(&mut state, "Remove inherited tab membership", false);
+        assert!(input.actions.is_empty());
+        assert!(
+            state.overlay.is_none(),
+            "{change} must reject old pane ownership before confirming old tab"
+        );
+        assert!(frame_rows(&state.compose(106, 30).unwrap())
+            .join("\n")
+            .contains("unavailable"));
+    }
 }
