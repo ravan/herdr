@@ -103,9 +103,10 @@ pub fn active_name() -> Option<String> {
 }
 
 pub fn local_attach_command() -> String {
+    let executable = crate::build_info::executable_name();
     match active_name() {
-        Some(name) => format!("herdr session attach {name}"),
-        None => "herdr".to_string(),
+        Some(name) => format!("{executable} session attach {name}"),
+        None => executable.to_string(),
     }
 }
 
@@ -114,9 +115,10 @@ pub fn local_stop_command() -> String {
 }
 
 pub fn stop_command_for(name: Option<&str>) -> String {
+    let executable = crate::build_info::executable_name();
     match name {
-        Some(name) => format!("herdr session stop {name}"),
-        None => "herdr server stop".to_string(),
+        Some(name) => format!("{executable} session stop {name}"),
+        None => format!("{executable} server stop"),
     }
 }
 

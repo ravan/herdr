@@ -2107,6 +2107,11 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 
 /// Manual self-update command (`herdr update`).
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+    if crate::build_info::fork_name().is_some() {
+        return Err(
+            "This fork uses manual GitHub releases; upstream self-update is disabled.".into(),
+        );
+    }
     let channel = UpdateChannel::configured();
 
     if is_homebrew_managed_install() {
@@ -2346,6 +2351,9 @@ fn print_outdated_integration_notice_with_updated_binary(updated_exe: &Path) {
 /// Background update check: only surface availability and release notes.
 /// Runs in a background thread at startup.
 pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
+    if crate::build_info::fork_name().is_some() {
+        return;
+    }
     crate::logging::update_check_started();
     if let Ok(version) = env::var(FAKE_UPDATE_VERSION_ENV) {
         let version = version.trim();
@@ -2502,6 +2510,27 @@ fn platform_target() -> (&'static str, &'static str) {
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    fn fork_background_update_does_not_emit_an_upstream_offer() {
+        if crate::build_info::fork_name().is_some() {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(4);
+            super::auto_update(sender);
+            assert!(
+                receiver.try_recv().is_err(),
+                "fork must not offer an upstream replacement"
+            );
+        }
+    }
+    #[test]
+    fn fork_update_rejects_upstream_replacement_before_install_checks() {
+        if crate::build_info::fork_name().is_some() {
+            let error = super::self_update(super::SelfUpdateOptions {
+                live_handoff: false,
+            })
+            .expect_err("fork builds must not install an upstream update");
+            assert!(error.contains("fork"), "{error}");
+        }
+    }
     use super::*;
     use std::os::unix::net::UnixListener;
     use std::sync::{

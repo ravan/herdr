@@ -7,7 +7,43 @@ const load = (name: string): any =>
   Bun.YAML.parse(readFileSync(new URL(`../.github/workflows/${name}.yml`, import.meta.url), "utf8"));
 const preview = load("preview");
 const release = load("release");
+const houston = load("fork-release");
 const adminGate = release.jobs["validate-release-source"].steps[0];
+
+describe("Houston fork releases", () => {
+  test("only fork tags in the owned fork can publish, with both admin checks", () => {
+    expect(houston.on).toEqual({ push: { tags: ["houston-v*"] } });
+    for (const name of ["preflight", "publish"]) {
+      expect(houston.jobs[name].if).toContain("github.repository == 'ravan/herdr'");
+      expect(houston.jobs[name].if).toContain("github.event_name == 'push'");
+      expect(houston.jobs[name].steps[0]).toEqual(adminGate);
+    }
+    expect(houston.jobs.publish.permissions).toEqual({ contents: "write" });
+    expect(houston.jobs.publish.needs).toEqual(["preflight", "build"]);
+  });
+
+  test("all five artifacts and the Windows executable carry Houston identity", () => {
+    expect(houston.jobs.build.env.HERDR_BUILD_FORK).toBe("houston");
+    expect(houston.jobs.build.strategy.matrix.include.map((entry: {asset: string}) => entry.asset)).toEqual([
+      "herdr-houston-linux-x86_64", "herdr-houston-linux-aarch64",
+      "herdr-houston-macos-x86_64", "herdr-houston-macos-aarch64",
+      "herdr-houston-windows-x86_64.zip",
+    ]);
+    const windows = houston.jobs.build.steps.find((step: {name?: string}) => step.name === "Package Windows artifact");
+    expect(windows.run).toContain('-ExecutableName "herdr-houston.exe"');
+    expect(windows.run).toContain("package_windows_conpty.ps1");
+  });
+
+  test("publication checks provenance and refuses existing releases instead of clobbering", () => {
+    const scripts = houston.jobs.publish.steps.filter((step: {run?: string}) => step.run).map((step: {run: string}) => step.run).join("\n");
+    expect(scripts).toContain("fork_release.py bundle");
+    expect(scripts).toContain('test "$current" = "$SOURCE_COMMIT"');
+    expect(scripts).toContain("--draft --prerelease");
+    expect(scripts).not.toContain("--clobber");
+    expect(scripts).not.toContain("distribution/");
+    expect(scripts).not.toContain("gh issue");
+  });
+});
 
 describe("official publishing workflow boundaries", () => {
   test("publishing is tag-only while normal PR CI remains enabled", () => {

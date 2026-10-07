@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -254,7 +255,9 @@ def stage_bundle(
     package_path: Path,
     herdr_exe: Path,
     output_dir: Path,
+    executable_name: str = "herdr.exe",
 ) -> None:
+    validate_executable_name(executable_name)
     metadata = load_metadata(metadata_path)
     if architecture not in metadata["bundles"]:
         raise ValueError(f"unsupported Windows architecture: {architecture}")
@@ -275,7 +278,7 @@ def stage_bundle(
         validate_nuspec(archive, metadata["package"])
         staging = Path(temporary) / "bundle"
         staging.mkdir()
-        shutil.copy2(herdr_exe, staging / "herdr.exe")
+        shutil.copy2(herdr_exe, staging / executable_name)
 
         for item in bundle["files"]:
             try:
@@ -404,21 +407,27 @@ def build_local_bundle(metadata_path: Path) -> None:
     )
 
 
-def expected_stage_files(metadata: dict[str, Any], architecture: str) -> set[str]:
-    files = {"herdr.exe", MARKER_PATH.as_posix()}
+def validate_executable_name(name: str) -> None:
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.exe", name, re.IGNORECASE) is None:
+        raise ValueError("executable name must be a Windows .exe basename")
+
+
+def expected_stage_files(metadata: dict[str, Any], architecture: str, executable_name: str = "herdr.exe") -> set[str]:
+    validate_executable_name(executable_name)
+    files = {executable_name, MARKER_PATH.as_posix()}
     files.update(item["destination"] for item in metadata["bundles"][architecture]["files"])
     files.update(item["destination"] for item in metadata["notices"])
     return files
 
 
-def validate_stage(metadata_path: Path, architecture: str, stage_dir: Path) -> None:
+def validate_stage(metadata_path: Path, architecture: str, stage_dir: Path, executable_name: str = "herdr.exe") -> None:
     metadata = load_metadata(metadata_path)
     actual = {
         path.relative_to(stage_dir).as_posix()
         for path in stage_dir.rglob("*")
         if path.is_file()
     }
-    expected = expected_stage_files(metadata, architecture)
+    expected = expected_stage_files(metadata, architecture, executable_name)
     if actual != expected:
         raise ValueError(
             f"bundle layout mismatch; missing={sorted(expected - actual)}, unexpected={sorted(actual - expected)}"
@@ -428,7 +437,7 @@ def validate_stage(metadata_path: Path, architecture: str, stage_dir: Path) -> N
     # The executable is not hash-pinned (it changes every build), so re-check
     # it here to cover a direct archive of an existing stage or a swap after
     # staging.
-    validate_static_msvc_runtime((stage_dir / "herdr.exe").read_bytes(), "herdr.exe")
+    validate_static_msvc_runtime((stage_dir / executable_name).read_bytes(), executable_name)
     for item in metadata["bundles"][architecture]["files"]:
         path = stage_dir / PurePosixPath(item["destination"])
         actual_hash = sha256_file(path)
@@ -442,9 +451,10 @@ def validate_stage(metadata_path: Path, architecture: str, stage_dir: Path) -> N
 
 
 def archive_bundle(
-    metadata_path: Path, architecture: str, stage_dir: Path, output_path: Path
+    metadata_path: Path, architecture: str, stage_dir: Path, output_path: Path,
+    executable_name: str = "herdr.exe",
 ) -> None:
-    validate_stage(metadata_path, architecture, stage_dir)
+    validate_stage(metadata_path, architecture, stage_dir, executable_name)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for path in sorted(stage_dir.rglob("*")):
@@ -462,11 +472,13 @@ def parse_args() -> argparse.Namespace:
     stage.add_argument("--package", type=Path, required=True)
     stage.add_argument("--herdr-exe", type=Path, required=True)
     stage.add_argument("--output-dir", type=Path, required=True)
+    stage.add_argument("--executable-name", default="herdr.exe")
 
     archive = subparsers.add_parser("archive")
     archive.add_argument("--architecture", choices=("x86_64",), default="x86_64")
     archive.add_argument("--stage-dir", type=Path, required=True)
     archive.add_argument("--output", type=Path, required=True)
+    archive.add_argument("--executable-name", default="herdr.exe")
     subparsers.add_parser("build-local")
     return parser.parse_args()
 
@@ -480,9 +492,10 @@ def main() -> None:
             args.package,
             args.herdr_exe,
             args.output_dir,
+            args.executable_name,
         )
     elif args.command == "archive":
-        archive_bundle(args.metadata, args.architecture, args.stage_dir, args.output)
+        archive_bundle(args.metadata, args.architecture, args.stage_dir, args.output, args.executable_name)
     else:
         build_local_bundle(args.metadata)
 

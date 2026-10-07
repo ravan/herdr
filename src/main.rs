@@ -720,7 +720,11 @@ fn main() -> io::Result<()> {
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
         platform::begin_cli_output();
-        println!("herdr {}", crate::build_info::version());
+        println!(
+            "{} {}",
+            crate::build_info::executable_name(),
+            crate::build_info::version()
+        );
         return Ok(());
     }
 
