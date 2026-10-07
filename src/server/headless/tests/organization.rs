@@ -167,7 +167,10 @@ async fn mc_s3_transfer_keeps_each_attached_clients_existing_terminal() {
     let (first, _first_render) = connect_test_shell(&mut server, 91, 80, 24);
     let (second, _second_render) = connect_test_shell(&mut server, 92, 80, 24);
     let first_before = client_shell_snapshot(&first);
-    second.try_iter().for_each(drop);
+    // The writer delivers asynchronously; consume the initial projection before
+    // expecting the response to tab.focus, rather than racing a nonblocking drain.
+    let second_initial = client_shell_snapshot(&second);
+    assert_eq!(second_initial.focused_tab_id, first_before.focused_tab_id);
     let (tx, rx) = std::sync::mpsc::channel();
     server.handle_client_shell_api_request(92,crate::api::ApiRequestMessage {
         request:serde_json::from_value(serde_json::json!({"id":"focus","method":"tab.focus","params":{"tab_id":destination_tab}})).unwrap(),
@@ -176,6 +179,10 @@ async fn mc_s3_transfer_keeps_each_attached_clients_existing_terminal() {
     rx.recv().unwrap();
     server.render_and_stream();
     let second_before = client_shell_snapshot(&second);
+    assert_eq!(
+        second_before.focused_tab_id.as_deref(),
+        Some(destination_tab.as_str())
+    );
     first.try_iter().for_each(drop);
     let (tx, rx) = std::sync::mpsc::channel();
     server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {

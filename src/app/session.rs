@@ -296,7 +296,9 @@ mod mission_tests {
     use super::*;
     #[tokio::test]
     async fn mc_s3_capture_restore_resolves_public_tab_numbers_and_reports_stale_targets() {
-        let config = crate::config::Config::default();
+        let mut config = crate::config::Config::default();
+        // These assertions cover restored identity, not an interactive shell lifecycle.
+        config.terminal.default_shell = crate::app::exiting_test_command().into();
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &config,
@@ -359,7 +361,9 @@ mod mission_tests {
     }
     #[tokio::test]
     async fn mc_s4_capture_restore_keeps_pane_overrides_after_final_public_maps() {
-        let config = crate::config::Config::default();
+        let mut config = crate::config::Config::default();
+        // An exiting command keeps Windows runtime cleanup independent of shell input.
+        config.terminal.default_shell = crate::app::exiting_test_command().into();
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &config,

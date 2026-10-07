@@ -135,7 +135,7 @@ fn system_notification_clicks_keep_endpoint_and_boot_identity() {
             .iter_mut()
             .find(|endpoint| endpoint.endpoint_id == endpoint_id)
             .unwrap();
-        let snapshot = endpoint.snapshot.as_mut().unwrap();
+        let snapshot = std::sync::Arc::make_mut(endpoint.snapshot.as_mut().unwrap());
         snapshot.boot_id = "replacement-boot".into();
         assert!(
             state
@@ -149,7 +149,7 @@ fn system_notification_clicks_keep_endpoint_and_boot_identity() {
             .iter_mut()
             .find(|endpoint| endpoint.endpoint_id == endpoint_id)
             .unwrap();
-        let snapshot = endpoint.snapshot.as_mut().unwrap();
+        let snapshot = std::sync::Arc::make_mut(endpoint.snapshot.as_mut().unwrap());
         snapshot.boot_id = target.boot_id.clone();
         snapshot.panes.clear();
         assert!(

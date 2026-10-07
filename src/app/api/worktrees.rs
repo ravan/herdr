@@ -781,7 +781,8 @@ mod tests {
             Some(&mission.id)
         );
         let catalog: serde_json::Value = serde_json::from_str(
-            &app.handle_api_request(
+            // Inspect the committed transaction before unrelated fixture exit events.
+            &app.handle_api_request_after_internal_events_drained(
                 serde_json::from_value(
                     serde_json::json!({"id":"catalog", "method":"organization.get", "params":{}}),
                 )
@@ -940,9 +941,12 @@ mod tests {
             .unwrap();
         let initial = app.tab_info(index, 0).unwrap();
         let initial_root = app.root_pane_info(index, 0).unwrap();
-        let other: SuccessResponse = serde_json::from_str(&app.handle_api_request(serde_json::from_value(serde_json::json!({
+        // Model this serialized request before processing fixture process exits.
+        let other_response = app.handle_api_request_after_internal_events_drained(serde_json::from_value(serde_json::json!({
             "id":"other", "method":"tab.create", "params": {"workspace_id":app.public_workspace_id(index), "focus":true, "label":"Unrelated active tab"}
-        })).unwrap())).unwrap();
+        })).unwrap());
+        let other: SuccessResponse = serde_json::from_str(&other_response)
+            .unwrap_or_else(|error| panic!("tab.create response: {other_response}: {error}"));
         let ResponseResult::TabCreated { tab: other_tab, .. } = other.result else {
             panic!("other tab");
         };
