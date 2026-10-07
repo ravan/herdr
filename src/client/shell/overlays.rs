@@ -1360,6 +1360,16 @@ fn render_mission_control(
         "Mission control",
         style.add_modifier(Modifier::BOLD),
     );
+    if geometry.header.y.saturating_add(3) < area.bottom().saturating_sub(1) {
+        put_text(
+            buffer,
+            geometry.header.x,
+            geometry.header.y.saturating_add(3),
+            geometry.header.width,
+            &control.scope,
+            style.fg(palette.overlay0),
+        );
+    }
     put_text(
         buffer,
         geometry.close.x,
@@ -1428,8 +1438,10 @@ fn render_mission_control(
             body.width,
             1,
         );
-        let selected =
-            row.selection.is_some() && row.selection.as_ref() == control.selected.as_ref();
+        let selected = row
+            .selection
+            .as_ref()
+            .is_some_and(|selection| control.selection_matches(selection));
         let row_style = if selected {
             style.bg(palette.active_row_bg).add_modifier(Modifier::BOLD)
         } else {

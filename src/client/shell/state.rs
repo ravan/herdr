@@ -13,6 +13,7 @@ pub(crate) enum ClientShellKeybindingSource {
 }
 
 pub(crate) struct ClientShellConfig {
+    pub(super) initial_endpoint_scope: Option<(String, String)>,
     pub(super) sidebar_width: u16,
     pub(super) sidebar_min_width: u16,
     pub(super) sidebar_max_width: u16,
@@ -304,7 +305,11 @@ pub(super) enum ClientRenameTarget {
     Collection(super::organization_maintenance::OrganizationCapture),
     Mission(super::organization_maintenance::OrganizationCapture),
     MissionObjective(super::organization_maintenance::OrganizationCapture),
-    NewCollection,
+    NewCollection {
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+    },
     NewMission {
         endpoint_id: ClientEndpointId,
         boot_id: String,
@@ -1114,6 +1119,11 @@ impl ClientShellState {
                 .or_default()
                 .extend(saved.collapsed_groups);
         }
+        let mut initial_endpoint = local_endpoint();
+        if let Some((label, session)) = config.initial_endpoint_scope.take() {
+            initial_endpoint.label = label;
+            initial_endpoint.session_name = session;
+        }
         Self {
             machine_diagnostics: Default::default(),
             config,
@@ -1185,7 +1195,7 @@ impl ClientShellState {
             last_composed_at: None,
             selection_repaint_deadline: None,
             hits: ShellHitMap::default(),
-            endpoints: vec![local_endpoint()],
+            endpoints: vec![initial_endpoint],
             active_endpoint_id: ClientEndpointId::Local,
             collapsed_endpoints: HashSet::new(),
             mode: ClientShellMode::Terminal,

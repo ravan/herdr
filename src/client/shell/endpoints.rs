@@ -12,6 +12,8 @@ pub(crate) struct ClientEndpointAgentViewProjection {
 pub(crate) struct ClientShellEndpoint {
     pub(crate) endpoint_id: ClientEndpointId,
     pub(crate) label: String,
+    /// Client connection metadata; catalogs and public target IDs are session scoped.
+    pub(crate) session_name: String,
     pub(crate) status: ClientEndpointStatus,
     pub(crate) snapshot: Option<Box<ClientShellSnapshot>>,
     /// Connection generation that produced `snapshot`. `None` is reserved for local tests.
@@ -73,6 +75,7 @@ impl ClientShellState {
             next.push(ClientShellEndpoint {
                 endpoint_id,
                 label: profile.label.clone(),
+                session_name: profile.session.clone(),
                 status: previous.map_or(
                     if profile.enabled {
                         ClientEndpointStatus::Connecting
@@ -795,6 +798,8 @@ pub(super) fn local_endpoint() -> ClientShellEndpoint {
     ClientShellEndpoint {
         endpoint_id: ClientEndpointId::Local,
         label: "Local".into(),
+        session_name: crate::session::active_name()
+            .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_owned()),
         status: ClientEndpointStatus::Online,
         snapshot: None,
         snapshot_generation: None,

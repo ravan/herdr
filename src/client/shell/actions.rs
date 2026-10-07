@@ -314,6 +314,7 @@ impl ClientShellState {
     ) -> bool {
         let code = code.into();
         let persistent = code == "missions"
+            || code.starts_with("worktree.create_in_mission")
             || code.starts_with("mission.")
             || code == "organization"
             || code.starts_with("collection.")
@@ -387,7 +388,9 @@ impl ClientShellState {
         let method_name = crate::api::api_method_name(&method).to_owned();
         let hibernate_advertised = !matches!(
             method,
-            crate::api::schema::Method::CollectionSetHibernating(_)
+            crate::api::schema::Method::CollectionCreate(_)
+                | crate::api::schema::Method::CollectionAssignFamily(_)
+                | crate::api::schema::Method::CollectionSetHibernating(_)
                 | crate::api::schema::Method::CollectionRename(_)
                 | crate::api::schema::Method::CollectionMove(_)
                 | crate::api::schema::Method::CollectionDelete(_)
@@ -401,21 +404,20 @@ impl ClientShellState {
                 | crate::api::schema::Method::MissionAssignPane(_)
                 | crate::api::schema::Method::MissionClearPaneOverride(_)
                 | crate::api::schema::Method::MissionAssign(_)
-        ) || self
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
-            .is_some_and(|endpoint| {
-                endpoint.organization_supported
-                    && endpoint
-                        .methods
-                        .as_ref()
-                        .is_some_and(|methods| methods.contains(method_name.as_str()))
-            });
+                | crate::api::schema::Method::WorktreeCreateInMission(_)
+        ) || self.organization_method_available(&method_name);
         if !hibernate_advertised || !self.supports_endpoint_method(&method) {
+            let notice_code = if matches!(
+                &kind,
+                PendingEndpointKind::PrepareMissionWorktreeCreate { .. }
+            ) {
+                format!("worktree.create_in_mission:{method_name}")
+            } else {
+                method_name.clone()
+            };
             outcome.repaint |= self.push_endpoint_notice(
                 ClientEndpointNoticeKind::Unsupported,
-                method_name.clone(),
+                notice_code,
                 "Action unavailable",
                 format!(
                     "This server does not support {method_name} yet. Update and restart it to enable this action."
@@ -631,8 +633,14 @@ impl ClientShellState {
                 let notice_code = if pending.method_name.starts_with("collection.")
                     || pending.method_name.starts_with("mission.")
                     || pending.method_name.starts_with("organization.")
+                    || pending.method_name == "worktree.create_in_mission"
                 {
                     format!("{}:{notice_code}", pending.method_name)
+                } else if matches!(
+                    &pending.kind,
+                    PendingEndpointKind::PrepareMissionWorktreeCreate { .. }
+                ) {
+                    format!("worktree.create_in_mission:{notice_code}")
                 } else {
                     notice_code
                 };

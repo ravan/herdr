@@ -64,15 +64,7 @@ impl ClientShellState {
     }
 
     fn pane_mission_action_available(&self, method: &str) -> bool {
-        self.endpoints
-            .iter()
-            .find(|e| e.endpoint_id == self.active_endpoint_id)
-            .is_some_and(|e| {
-                e.organization_supported
-                    && e.methods
-                        .as_ref()
-                        .is_some_and(|m| m.contains(method) && m.contains("organization.get"))
-            })
+        self.organization_method_available(method)
     }
 
     pub(super) fn open_pane_mission_picker(

@@ -1,5 +1,743 @@
 use super::*;
 
+#[test]
+fn mc_s9_direct_remote_preferences_reload_across_launch_sockets_without_local_bleed() {
+    let _lock = crate::config::test_config_env_lock().lock().unwrap();
+    let root = std::env::temp_dir().join(format!(
+        "herdr-mc-s9-direct-preferences-{}",
+        std::process::id()
+    ));
+    struct RestoreEnvironment(
+        Vec<(&'static str, Option<std::ffi::OsString>)>,
+        std::path::PathBuf,
+    );
+    impl Drop for RestoreEnvironment {
+        fn drop(&mut self) {
+            for (name, value) in &self.0 {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+    let names = [
+        "XDG_STATE_HOME",
+        crate::remote::REMOTE_TARGET_ENV_VAR,
+        crate::remote::REMOTE_SESSION_ENV_VAR,
+    ];
+    let _restore = RestoreEnvironment(
+        names
+            .into_iter()
+            .map(|name| (name, std::env::var_os(name)))
+            .collect(),
+        root.clone(),
+    );
+    std::env::set_var("XDG_STATE_HOME", &root);
+    std::env::set_var(crate::remote::REMOTE_TARGET_ENV_VAR, "demo@loopback");
+    std::env::set_var(crate::remote::REMOTE_SESSION_ENV_VAR, "agents");
+    let direct_config = |socket: &str| {
+        ClientShellConfig::from_config(&Config::default())
+            .with_keybinding_source(ClientShellKeybindingSource::Endpoint)
+            .with_local_endpoint(std::path::Path::new(socket))
+    };
+    let first_config = direct_config("/tmp/herdr-remote-111-demo-loopback-agents.sock");
+    let base = maintenance_client();
+    let mut catalog = base.endpoints[0].organization.clone().unwrap();
+    catalog
+        .organization
+        .family_assignments
+        .push(crate::organization::FamilyAssignment {
+            family_id: crate::organization::FamilyId::Standalone {
+                workspace_id: "ws_1".into(),
+            },
+            collection_id: crate::organization::CollectionId("collection_1".into()),
+        });
+    catalog.organization.revision += 1;
+    let mut projected = base.snapshot.as_deref().unwrap().clone();
+    projected.workspaces[0].label = "Same member".into();
+    let install = |state: &mut ClientShellState| {
+        state.cache_endpoint_snapshot_for_generation(
+            &ClientEndpointId::Local,
+            1,
+            Box::new(projected.clone()),
+        );
+        state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+        state.set_endpoint_organization_for_generation(
+            &ClientEndpointId::Local,
+            1,
+            catalog.clone(),
+        );
+        state.activate_endpoint_projection(&ClientEndpointId::Local);
+        state.set_pane_surface(surface());
+    };
+    let first_path = first_config.preferences_path.clone().unwrap();
+    assert!(first_path.starts_with(&root));
+    let mut first = ClientShellState::new(first_config);
+    install(&mut first);
+    assert!(frame_rows(&first.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Same member"));
+    let rect = first
+        .hits
+        .collections
+        .iter()
+        .find(|(_, _, id)| id.0 == "collection_1")
+        .unwrap()
+        .0;
+    click(&mut first, rect);
+    assert!(
+        first_path.exists(),
+        "native collapse saves presentation state"
+    );
+    let second_config = direct_config("/tmp/herdr-remote-222-demo-loopback-agents.sock");
+    assert_eq!(
+        first_path,
+        second_config.preferences_path.clone().unwrap(),
+        "same target/session survives a new launcher PID/socket"
+    );
+    let mut restored = ClientShellState::new(second_config);
+    install(&mut restored);
+    assert!(!frame_rows(&restored.compose(106, 40).unwrap())
+        .join("\n")
+        .contains("Same member"));
+    let local_config = ClientShellConfig::from_config(&Config::default())
+        .with_local_endpoint(std::path::Path::new("/tmp/local.sock"));
+    assert_ne!(first_path, local_config.preferences_path.clone().unwrap());
+    assert!(
+        local_config.initial_endpoint_scope.is_none(),
+        "ordinary Local ignores inherited remote labels"
+    );
+    let mut local = ClientShellState::new(local_config);
+    install(&mut local);
+    let rows = frame_rows(&local.compose(106, 40).unwrap()).join("\n");
+    assert!(
+        rows.contains("Same member"),
+        "same local catalog ID remains expanded: {rows}"
+    );
+    std::env::set_var(crate::remote::REMOTE_SESSION_ENV_VAR, "other");
+    assert_ne!(
+        first_path,
+        direct_config("/tmp/herdr-remote-333.sock")
+            .preferences_path
+            .unwrap()
+    );
+    std::env::set_var(crate::remote::REMOTE_SESSION_ENV_VAR, "agents");
+    std::env::set_var(crate::remote::REMOTE_TARGET_ENV_VAR, "different@loopback");
+    assert_ne!(
+        first_path,
+        direct_config("/tmp/herdr-remote-444.sock")
+            .preferences_path
+            .unwrap()
+    );
+}
+
+#[test]
+fn mc_s9_offline_machine_click_keeps_local_original_terminal_input() {
+    let mut state = maintenance_client();
+    let profile = crate::client::endpoint::SavedSshEndpoint {
+        id: crate::client::endpoint::ProfileId::parse("cccccccccccccccccccccccccccccccc").unwrap(),
+        label: "Offline SSH".into(),
+        target: "offline".into(),
+        session: "remote".into(),
+        enabled: true,
+    };
+    let id = ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state.set_endpoint_status(&id, ClientEndpointStatus::Reconnecting);
+    state.compose(106, 40).unwrap();
+    assert!(state.handle_input_bytes(b"before").requests.iter().any(
+        |r| matches!(r, ClientMessage::ClientShellPaneInput { pane_id, .. } if pane_id=="pane_1")
+    ));
+    let rect = state
+        .hits
+        .machines
+        .iter()
+        .find(|m| m.endpoint_id == id)
+        .unwrap()
+        .rect;
+    let attempted = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: rect.x + 3,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(attempted.actions.is_empty() && state.active_endpoint_id == ClientEndpointId::Local);
+    let typing = state.handle_input_bytes(b"after");
+    assert!(typing.requests.iter().any(|r| matches!(r, ClientMessage::ClientShellPaneInput { pane_id, .. } if pane_id=="pane_1")), "unavailable remote cannot capture local terminal input");
+}
+
+#[test]
+fn mc_s9_pane_assignment_picker_uses_its_own_method_without_getter() {
+    let mut state = mission_client();
+    state.cache_endpoint_snapshot_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        Box::new(mc_s4_agents_snapshot()),
+    );
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut projected = surface();
+    projected.projection_revision = 2;
+    state.set_pane_surface(projected);
+    state.set_endpoint_methods(Some(vec!["mission.assign_pane".into()]));
+    state.config.agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+    state.compose(106, 40).unwrap();
+    let rect = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, _, id)| id == "pane_2")
+        .unwrap()
+        .0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    click_menu_label(&mut state, "Assign mission", false);
+    assert!(
+        matches!(state.overlay, Some(ClientShellOverlay::ContextMenu(_))),
+        "current catalog + pane assignment method is sufficient"
+    );
+    let submit = click_menu_label(&mut state, "Empty mission", false);
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("pane assignment");
+    };
+    assert_eq!(
+        serde_json::to_value(&request.method).unwrap(),
+        serde_json::json!({"method":"mission.assign_pane","params":{"pane_id":"pane_2","mission_id":"mission_1"}})
+    );
+}
+
+#[test]
+fn mc_s9_tab_assignment_picker_uses_only_its_own_method_and_confirmed_companion() {
+    let mut state = maintenance_client();
+    state.set_endpoint_methods(Some(vec!["mission.assign".into()]));
+    state.compose(106, 30).unwrap();
+    let tab = state.hits.tabs[0].0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: tab.x,
+        row: tab.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    click_menu_label(&mut state, "Add to mission", false);
+    assert!(
+        matches!(state.overlay, Some(ClientShellOverlay::ContextMenu(_))),
+        "getter absence does not disable independently supported assignment picker"
+    );
+    let submit = click_menu_label(&mut state, "Other", false);
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("tab assignment");
+    };
+    assert_eq!(
+        crate::api::api_method_name(&request.method),
+        "mission.assign"
+    );
+}
+
+#[test]
+fn mc_s9_independent_definition_writers_do_not_require_a_getter_method() {
+    for method in ["mission.create", "collection.create"] {
+        let mut state = maintenance_client();
+        state.set_endpoint_methods(Some(vec![method.into()]));
+        let mut input = ClientShellInput::default();
+        if method == "mission.create" {
+            state.open_new_mission(&mut input);
+        } else {
+            state.open_new_collection(&mut input);
+        }
+        assert!(
+            matches!(state.overlay, Some(ClientShellOverlay::Rename(_))),
+            "{method}: confirmed companion supplies data authority without getter"
+        );
+        state.handle_input_bytes(b"Independent writer");
+        let submit = state.handle_input_bytes(b"\r");
+        let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+            panic!("independent writer request");
+        };
+        assert_eq!(crate::api::api_method_name(&request.method), method);
+    }
+}
+
+#[test]
+fn mc_s9_confirmed_companion_definitions_are_readable_without_a_getter_method() {
+    let mut state = maintenance_client();
+    state.set_endpoint_methods(Some(Vec::new()));
+    let mut input = ClientShellInput::default();
+    state.open_missions(&mut input);
+    assert!(
+        matches!(state.overlay, Some(ClientShellOverlay::ContextMenu(_))),
+        "read-only UI uses already confirmed catalog, without sending a getter"
+    );
+    let text = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(text.contains("Tako platform") && input.actions.is_empty());
+}
+
+#[test]
+fn mc_s9_compact_scope_preserves_session_and_honestly_elides_long_fields() {
+    let long_label = format!("Remote{}", "x".repeat(120));
+    let long_session = format!("selected-{}", "x".repeat(55));
+    for (label, session) in [
+        (long_label, "agents".to_owned()),
+        ("SSH loopback".to_owned(), long_session.clone()),
+    ] {
+        let mut config = ClientShellConfig::from_config(&Config::default());
+        config.initial_endpoint_scope = Some((label, session.clone()));
+        let mut state = ClientShellState::new(config);
+        state.set_snapshot(Box::new(snapshot()));
+        state.set_pane_surface(surface());
+        state.set_endpoint_methods(Some(vec!["workspace.focus".into()]));
+        state.open_mission_control();
+        let text = frame_rows(&state.compose(50, 14).unwrap()).join("\n");
+        let scope = text
+            .lines()
+            .find(|line| line.contains("session "))
+            .expect("selected session remains visible when endpoint label is long");
+        assert!(scope.contains('…'), "compact truncation is explicit");
+        if session == "agents" {
+            assert!(scope.contains("Remote") && scope.contains("session agents"));
+        } else {
+            assert!(scope.contains("SSH") && scope.contains("session selected-"));
+        }
+        assert!(
+            text.contains("ws_1"),
+            "scope never consumes target public-ID row"
+        );
+        let wide = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+        assert!(
+            wide.contains(&session),
+            "wider scope shows complete selected session"
+        );
+        let submit = state.handle_input_bytes(b"\r");
+        assert!(
+            matches!(&submit.actions[..], [ClientShellAction::Endpoint { request, .. }] if matches!(&request.method, crate::api::schema::Method::WorkspaceFocus(w) if w.workspace_id=="ws_1")),
+            "elision never changes captured public identity"
+        );
+    }
+}
+
+#[test]
+fn mc_s9_same_collection_ids_keep_endpoint_preferences_separate_after_reload() {
+    let path = std::env::temp_dir().join(format!(
+        "herdr-mc-s9-preferences-{}.json",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let remote = crate::client::endpoint::SavedSshEndpoint {
+        id: crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        label: "Remote".into(),
+        target: "demo@loopback".into(),
+        session: "other".into(),
+        enabled: true,
+    };
+    let id = ClientEndpointId::Ssh(remote.id.clone());
+    let mut first = maintenance_client();
+    first.config.preferences_path = Some(path.clone());
+    let mut catalog = first.endpoints[0].organization.clone().unwrap();
+    catalog
+        .organization
+        .family_assignments
+        .push(crate::organization::FamilyAssignment {
+            family_id: crate::organization::FamilyId::Standalone {
+                workspace_id: "ws_1".into(),
+            },
+            collection_id: crate::organization::CollectionId("collection_1".into()),
+        });
+    catalog.organization.revision += 1;
+    first.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 1, catalog.clone());
+    let mut local_snapshot = first.snapshot.as_deref().unwrap().clone();
+    local_snapshot.workspaces[0].label = "Local member".into();
+    let mut remote_snapshot = local_snapshot.clone();
+    remote_snapshot.boot_id = "remote-boot".into();
+    remote_snapshot.workspaces[0].label = "Remote member".into();
+    let mut remote_catalog = catalog.clone();
+    remote_catalog.boot_id = "remote-boot".into();
+    let install = |state: &mut ClientShellState| {
+        state.cache_endpoint_snapshot_for_generation(
+            &ClientEndpointId::Local,
+            1,
+            Box::new(local_snapshot.clone()),
+        );
+        state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+        state.set_endpoint_organization_for_generation(
+            &ClientEndpointId::Local,
+            1,
+            catalog.clone(),
+        );
+        state.set_endpoint_catalog(std::slice::from_ref(&remote));
+        state.set_endpoint_status(&id, ClientEndpointStatus::Online);
+        state.cache_endpoint_snapshot_for_generation(&id, 7, Box::new(remote_snapshot.clone()));
+        state.set_endpoint_organization_supported(&id, true);
+        state.set_endpoint_organization_for_generation(&id, 7, remote_catalog.clone());
+        state.activate_endpoint_projection(&ClientEndpointId::Local);
+        state.set_pane_surface(surface());
+    };
+    install(&mut first);
+    first.compose(106, 40).unwrap();
+    let rect = first
+        .hits
+        .collections
+        .iter()
+        .find(|(_, e, cid)| *e == ClientEndpointId::Local && cid.0 == "collection_1")
+        .unwrap()
+        .0;
+    click(&mut first, rect);
+    let rows = frame_rows(&first.compose(106, 40).unwrap()).join("\n");
+    assert!(!rows.contains("Local member") && rows.contains("Remote member"));
+    let config =
+        ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
+    let mut restored = ClientShellState::new(config);
+    install(&mut restored);
+    let rows = frame_rows(&restored.compose(106, 40).unwrap()).join("\n");
+    assert!(
+        !rows.contains("Local member") && rows.contains("Remote member"),
+        "preferences are scoped by exact endpoint identity"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn mc_s9_offline_endpoint_cannot_open_catalog_actions_from_cached_advertisements() {
+    let mut state = maintenance_client();
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Reconnecting);
+    let mut input = ClientShellInput::default();
+    state.open_missions(&mut input);
+    assert!(
+        state.overlay.is_none(),
+        "cached methods do not make offline actions available"
+    );
+    assert!(input.actions.is_empty());
+    assert!(state
+        .visible_endpoint_notice
+        .as_ref()
+        .is_some_and(|n| n.persistent));
+}
+
+#[test]
+fn mc_s9_missions_menu_cannot_retarget_new_creation_after_reconnect() {
+    let mut state = maintenance_client();
+    let mut input = ClientShellInput::default();
+    state.open_missions(&mut input);
+    let snapshot = state.snapshot.as_deref().unwrap().clone();
+    let catalog = state.endpoints[0].organization.clone().unwrap();
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 2, Box::new(snapshot));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 2, catalog);
+    state.set_pane_surface(surface());
+    click_menu_label(&mut state, "New mission", false);
+    assert!(
+        !matches!(state.overlay, Some(ClientShellOverlay::Rename(_))),
+        "old menu must not adopt new creation authority"
+    );
+    assert!(state
+        .visible_endpoint_notice
+        .as_ref()
+        .is_some_and(|n| n.persistent));
+}
+
+#[test]
+fn mc_s9_direct_remote_frontend_uses_actual_target_session_scope() {
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.initial_endpoint_scope = Some(("SSH demo@loopback".into(), "remote-agents".into()));
+    let mut state = ClientShellState::new(config);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.open_mission_control();
+    let text = frame_rows(&state.compose(106, 30).unwrap()).join("\n");
+    assert!(
+        text.contains("SSH demo@loopback · session remote-agents"),
+        "forwarded endpoint must identify actual scope"
+    );
+    assert!(!text.contains("Local · session"));
+}
+
+#[test]
+fn mc_s9_reconnected_creation_waits_for_current_complete_catalog() {
+    let mut state = maintenance_client();
+    let mut input = ClientShellInput::default();
+    state.open_new_mission(&mut input);
+    state.handle_input_bytes(b"Captured");
+    state.mark_endpoint_disconnected(&ClientEndpointId::Local);
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Online);
+    state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let submit = state.handle_input_bytes(b"\r");
+    assert!(
+        submit.actions.is_empty(),
+        "advertisement alone cannot restore mutation authority"
+    );
+    assert!(state
+        .visible_endpoint_notice
+        .as_ref()
+        .is_some_and(|n| n.persistent));
+}
+
+#[test]
+fn mc_s9_overview_shows_selected_endpoint_session_and_keeps_catalogs_separate() {
+    let mut state = maintenance_client();
+    let mut remote = crate::client::endpoint::SavedSshEndpoint {
+        id: crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        label: "Build".into(),
+        target: "demo@loopback".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let id = ClientEndpointId::Ssh(remote.id.clone());
+    state.set_endpoint_catalog(std::slice::from_ref(&remote));
+    state.set_endpoint_status(&id, ClientEndpointStatus::Online);
+    let mut snap = state.snapshot.as_deref().unwrap().clone();
+    snap.boot_id = "remote-boot".into();
+    state.cache_endpoint_snapshot_for_generation(&id, 7, Box::new(snap));
+    state.set_endpoint_methods_for(&id, Some(vec!["organization.get".into()]));
+    state.set_endpoint_organization_supported(&id, true);
+    let mut catalog = state.endpoints[0].organization.clone().unwrap();
+    catalog.boot_id = "remote-boot".into();
+    catalog.organization.missions[0].name =
+        serde_json::from_value(serde_json::json!("Remote mission")).unwrap();
+    state.set_endpoint_organization_for_generation(&id, 7, catalog);
+    state.activate_endpoint_projection(&id);
+    let mut pane = surface();
+    pane.boot_id = "remote-boot".into();
+    state.set_pane_surface(pane);
+    state.open_mission_control();
+    state.handle_input_bytes(b"\t");
+    for (cols, rows) in [(140, 40), (50, 14)] {
+        let text = frame_rows(&state.compose(cols, rows).unwrap()).join("\n");
+        assert!(
+            text.contains("Build · session agents"),
+            "selected scope at {cols}×{rows}: {text}"
+        );
+        assert!(
+            text.contains("Remote mission") && !text.contains("Tako platform"),
+            "catalog is session scoped"
+        );
+    }
+    remote.label = "Renamed".into();
+    state.set_endpoint_catalog(&[remote]);
+    let text = frame_rows(&state.compose(140, 40).unwrap()).join("\n");
+    assert!(
+        text.contains("Renamed · session agents"),
+        "scope follows profile rename even when catalog/snapshot revisions stay unchanged"
+    );
+}
+
+#[test]
+fn mc_s9_contextual_worktree_failure_history_survives_typing_reconnect_and_ticks() {
+    for code in [
+        "endpoint_timeout",
+        "endpoint_cancelled",
+        "permission_denied",
+    ] {
+        let mut state = maintenance_client();
+        state.set_endpoint_methods(Some(vec![
+            "organization.get".into(),
+            "worktree.create_in_mission".into(),
+        ]));
+        let mut input = ClientShellInput::default();
+        state.push_endpoint_method(
+            crate::api::schema::Method::WorktreeCreateInMission(
+                crate::api::schema::WorktreeCreateInMissionParams {
+                    mission_id: crate::organization::MissionId("mission_1".into()),
+                    create: crate::api::schema::WorktreeCreateParams {
+                        workspace_id: Some("ws_1".into()),
+                        ..Default::default()
+                    },
+                },
+            ),
+            &mut input,
+        );
+        let [ClientShellAction::Endpoint { request, .. }] = &input.actions[..] else {
+            panic!("contextual request");
+        };
+        state.handle_endpoint_result(
+            "boot-1",
+            &request.id,
+            Err(ClientShellEndpointError {
+                code: Some(code.into()),
+                message: "Earlier contextual failure".into(),
+            }),
+        );
+        assert!(
+            state
+                .visible_endpoint_notice
+                .as_ref()
+                .is_some_and(|n| n.persistent),
+            "{code}: contextual operation history persists"
+        );
+        state.mark_endpoint_disconnected(&ClientEndpointId::Local);
+        state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Online);
+        state.activate_endpoint_projection(&ClientEndpointId::Local);
+        state.set_pane_surface(surface());
+        state.handle_input_bytes(b"still typing");
+        state.tick_notifications(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        assert!(state.visible_endpoint_notice.is_some(), "{code}");
+    }
+}
+
+#[test]
+fn mc_s9_failed_organization_action_history_survives_boot_replacement_and_typing() {
+    for code in [
+        "endpoint_timeout",
+        "endpoint_cancelled",
+        "permission_denied",
+    ] {
+        let mut state = maintenance_client();
+        let mut submitted = ClientShellInput::default();
+        state.push_endpoint_method(
+            crate::api::schema::Method::MissionCreate(crate::api::schema::MissionCreateParams {
+                name: "New".into(),
+                objective: None,
+            }),
+            &mut submitted,
+        );
+        let [ClientShellAction::Endpoint { request, .. }] = &submitted.actions[..] else {
+            panic!("request");
+        };
+        state.handle_endpoint_result(
+            "boot-1",
+            &request.id,
+            Err(ClientShellEndpointError {
+                code: Some(code.into()),
+                message: "Rejected earlier action".into(),
+            }),
+        );
+        let original = state.visible_endpoint_notice.clone().unwrap();
+        let mut snap = state.snapshot.as_deref().unwrap().clone();
+        snap.boot_id = "boot-2".into();
+        state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 2, Box::new(snap));
+        state.activate_endpoint_projection(&ClientEndpointId::Local);
+        let mut pane = surface();
+        pane.boot_id = "boot-2".into();
+        state.set_pane_surface(pane);
+        state.handle_input_bytes(b"original shell still accepts text");
+        state.tick_notifications(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        assert_eq!(
+            state.visible_endpoint_notice.as_ref().map(|n| &n.body),
+            Some(&original.body),
+            "{code}: failure history survives boot replacement"
+        );
+    }
+}
+
+#[test]
+fn mc_s9_collection_form_cannot_cross_connection_generation() {
+    let mut state = maintenance_client();
+    let mut input = ClientShellInput::default();
+    state.open_new_collection(&mut input);
+    state.handle_input_bytes(b"Captured");
+    let snap = state.snapshot.as_deref().unwrap().clone();
+    let catalog = state.endpoints[0].organization.clone().unwrap();
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 2, Box::new(snap));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 2, catalog);
+    let submitted = state.handle_input_bytes(b"\r");
+    assert!(
+        submitted.actions.is_empty(),
+        "old collection form cannot mutate fresh connection"
+    );
+    assert!(state.visible_endpoint_notice.is_some());
+}
+
+#[test]
+fn mc_s9_family_assignment_does_not_require_collection_creation() {
+    let mut state = maintenance_client();
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "collection.assign_family".into(),
+    ]));
+    let mut input = ClientShellInput::default();
+    state.open_collection_picker("ws_1".into(), &mut input);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ContextMenu(_))
+    ));
+    let submit = click_menu_label(&mut state, "Second", false);
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("independent family assignment");
+    };
+    assert_eq!(
+        crate::api::api_method_name(&request.method),
+        "collection.assign_family"
+    );
+}
+
+#[test]
+fn mc_s9_creation_menu_disables_only_missing_method_and_keeps_terminal_access() {
+    let mut state = maintenance_client();
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "mission.rename".into(),
+    ]));
+    let mut input = ClientShellInput::default();
+    state.open_new_mission(&mut input);
+    assert!(
+        state.overlay.is_none(),
+        "missing create disables only creation form"
+    );
+    assert!(state.visible_endpoint_notice.is_some());
+    assert!(state
+        .handle_input_bytes(b"normal shell")
+        .requests
+        .iter()
+        .any(|r| matches!(r, ClientMessage::ClientShellPaneInput { .. })));
+    state.open_missions(&mut input);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ContextMenu(_))
+    ));
+}
+
+#[test]
+fn mc_s9_collection_creation_does_not_require_family_assignment() {
+    let mut state = maintenance_client();
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "collection.create".into(),
+    ]));
+    let mut input = ClientShellInput::default();
+    state.open_new_collection(&mut input);
+    assert!(matches!(state.overlay, Some(ClientShellOverlay::Rename(_))));
+    state.handle_input_bytes(b"Independent");
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("independent collection create");
+    };
+    assert_eq!(
+        crate::api::api_method_name(&request.method),
+        "collection.create"
+    );
+}
+
+#[test]
+fn mc_s9_read_and_maintenance_missions_remain_available_without_create_or_assign() {
+    let mut state = maintenance_client();
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "mission.rename".into(),
+    ]));
+    let mut input = ClientShellInput::default();
+    state.open_missions(&mut input);
+    assert!(
+        matches!(state.overlay, Some(ClientShellOverlay::ContextMenu(_))),
+        "read-only definitions must remain reachable"
+    );
+    click_menu_label(&mut state, "Tako platform", false);
+    click_menu_label(&mut state, "Rename mission", false);
+    state.handle_input_bytes(b"\x15Remote-safe");
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("independently advertised rename");
+    };
+    assert_eq!(
+        crate::api::api_method_name(&request.method),
+        "mission.rename"
+    );
+}
+
 fn click(state: &mut ClientShellState, rect: Rect) -> ClientShellInput {
     state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -29,6 +767,18 @@ fn mc_s1_client_create_uses_the_menu_and_keeps_form_text_out_of_the_terminal() {
         "collection.assign_family".into(),
     ]));
     state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    // Mutation authority follows the complete catalog for this connection.
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot()));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    state.set_endpoint_organization_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        serde_json::from_value(
+            serde_json::json!({"boot_id":"boot-1","organization":{"revision":0,"collections":[]}}),
+        )
+        .unwrap(),
+    );
     state.compose(106, 30).unwrap();
     let launcher = state.hits.global_launcher;
     click(&mut state, launcher);
@@ -501,6 +1251,18 @@ fn mc_s1_create_shows_pending_state_until_the_server_response() {
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
     state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    // Mutation authority follows the complete catalog for this connection.
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot()));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    state.set_endpoint_organization_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        serde_json::from_value(
+            serde_json::json!({"boot_id":"boot-1","organization":{"revision":0,"collections":[]}}),
+        )
+        .unwrap(),
+    );
     state.set_endpoint_methods(Some(vec![
         "organization.get".into(),
         "collection.create".into(),
@@ -551,7 +1313,22 @@ fn mc_s1_stale_response_does_not_cancel_the_current_boots_collection_request() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
-    state.set_endpoint_methods(Some(vec!["collection.create".into()]));
+    state.set_endpoint_methods(Some(vec![
+        "collection.create".into(),
+        "organization.get".into(),
+    ]));
+    state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot()));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    state.set_endpoint_organization_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        serde_json::from_value(
+            serde_json::json!({"boot_id":"boot-1","organization":{"revision":0,"collections":[]}}),
+        )
+        .unwrap(),
+    );
     let mut outcome = ClientShellInput::default();
     state.push_endpoint_method(
         crate::api::schema::Method::CollectionCreate(crate::api::schema::CollectionCreateParams {
@@ -614,6 +1391,18 @@ fn mc_s1_confirmed_create_repaints_a_silent_client_and_applies_the_confirmed_cat
     state.activate_endpoint_projection(&ClientEndpointId::Local);
     state.set_pane_surface(surface());
     state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    // Mutation authority follows the complete catalog for this connection.
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot()));
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    state.set_endpoint_organization_for_generation(
+        &ClientEndpointId::Local,
+        1,
+        serde_json::from_value(
+            serde_json::json!({"boot_id":"boot-1","organization":{"revision":0,"collections":[]}}),
+        )
+        .unwrap(),
+    );
     state.set_endpoint_methods(Some(vec![
         "collection.create".into(),
         "organization.get".into(),
@@ -1117,6 +1906,8 @@ fn mc_s3_stale_picker_and_missing_mission_advertisement_leave_terminal_usable() 
     assert!(click_menu_label(&mut legacy, "Missions", true)
         .actions
         .is_empty());
+    // Read-only definitions remain reachable; only unadvertised creation is disabled.
+    click_menu_label(&mut legacy, "New mission", false);
     let typing = legacy.handle_input_bytes(b"echo preserved");
     assert!(typing.requests.iter().any(|request| matches!(request,ClientMessage::ClientShellPaneInput {pane_id,..} if pane_id == "pane_1")),"typing still goes to the terminal");
     assert!(frame_rows(&legacy.compose(106, 30).unwrap())

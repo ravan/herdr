@@ -142,6 +142,7 @@ impl ClientShellConfig {
     pub(crate) fn from_config(config: &Config) -> Self {
         let theme_runtime = crate::app::client_theme_runtime_from_config(config);
         Self {
+            initial_endpoint_scope: None,
             sidebar_width: config.ui.sidebar_width,
             sidebar_min_width: config.ui.sidebar_min_width,
             sidebar_max_width: config.ui.sidebar_max_width,
@@ -219,7 +220,21 @@ impl ClientShellConfig {
         }
     }
 
-    pub(crate) fn with_local_endpoint(self, socket_path: &std::path::Path) -> Self {
+    pub(crate) fn with_local_endpoint(mut self, socket_path: &std::path::Path) -> Self {
+        if self.keybinding_source != ClientShellKeybindingSource::Local {
+            if let (Ok(target), Ok(session)) = (
+                std::env::var(crate::remote::REMOTE_TARGET_ENV_VAR),
+                std::env::var(crate::remote::REMOTE_SESSION_ENV_VAR),
+            ) {
+                if crate::remote::validate_remote_target(&target).is_ok()
+                    && crate::session::validate_name(&session).is_ok()
+                {
+                    let path = preferences::path_for_direct_remote_endpoint(&target, &session);
+                    self.initial_endpoint_scope = Some((format!("SSH {target}"), session));
+                    return self.with_preferences_path(path);
+                }
+            }
+        }
         self.with_preferences_path(preferences::path_for_local_endpoint(socket_path))
     }
 

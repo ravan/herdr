@@ -1022,13 +1022,29 @@ impl ClientShellState {
                     )
                 })
             }
-            ClientRenameTarget::NewCollection => (!trimmed.is_empty()).then(|| {
-                crate::api::schema::Method::CollectionCreate(
-                    crate::api::schema::CollectionCreateParams {
-                        name: trimmed.to_owned(),
-                    },
-                )
-            }),
+            ClientRenameTarget::NewCollection {
+                endpoint_id,
+                boot_id,
+                generation,
+            } => {
+                if endpoint_id != self.active_endpoint_id
+                    || !self.endpoints.iter().any(|e| {
+                        e.endpoint_id == endpoint_id
+                            && e.snapshot_generation == generation
+                            && e.snapshot.as_ref().is_some_and(|s| s.boot_id == boot_id)
+                    })
+                {
+                    outcome.repaint |= self.push_endpoint_notice(ClientEndpointNoticeKind::Rejected,"collection.stale_form","Action unavailable","The collection form belongs to an earlier server connection. Open it again to create a collection.");
+                    return;
+                }
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::CollectionCreate(
+                        crate::api::schema::CollectionCreateParams {
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
             ClientRenameTarget::NewWorkspace {
                 source_workspace_id,
                 cwd,

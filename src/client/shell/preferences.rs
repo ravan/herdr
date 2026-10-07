@@ -42,14 +42,25 @@ pub(super) struct ClientChromePreferences {
 }
 
 pub(super) fn path_for_local_endpoint(socket_path: &Path) -> PathBuf {
+    path_for_identity("local", socket_path.to_string_lossy().bytes())
+}
+
+pub(super) fn path_for_direct_remote_endpoint(target: &str, session: &str) -> PathBuf {
+    path_for_identity(
+        "ssh-direct",
+        target.bytes().chain([0]).chain(session.bytes()),
+    )
+}
+
+fn path_for_identity(namespace: &str, identity: impl IntoIterator<Item = u8>) -> PathBuf {
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in socket_path.to_string_lossy().as_bytes() {
-        hash ^= u64::from(*byte);
+    for byte in identity {
+        hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     crate::config::state_dir()
         .join("client-shell")
-        .join(format!("local-{hash:016x}.json"))
+        .join(format!("{namespace}-{hash:016x}.json"))
 }
 
 pub(super) fn load(path: &Path) -> Option<ClientChromePreferences> {

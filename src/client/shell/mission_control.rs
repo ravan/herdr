@@ -1,3 +1,4 @@
+use super::render::display_width;
 use super::*;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 mod members;
@@ -89,6 +90,9 @@ struct ProjectionStamp {
 #[derive(Debug)]
 pub(super) struct MissionControl {
     pub(super) view: MissionControlView,
+    pub(super) scope: String,
+    scope_source: Option<(String, String)>,
+    scope_width: Option<u16>,
     pub(super) query: TextEditor,
     endpoint_id: ClientEndpointId,
     stamp: Option<ProjectionStamp>,
@@ -109,6 +113,32 @@ pub(super) struct MissionControl {
 }
 
 impl MissionControl {
+    fn fit_scope(&mut self, width: u16) {
+        if self.scope_width == Some(width) {
+            return;
+        }
+        self.scope_width = Some(width);
+        let Some((label, session)) = self.scope_source.as_ref() else {
+            return;
+        };
+        let separator = if width >= 20 { " · session " } else { " · " };
+        let available = usize::from(width.saturating_sub(display_width(separator)));
+        if available < 2 {
+            self.scope = crate::ui::truncate_end(session, usize::from(width));
+            return;
+        }
+        // Keep a recognizable endpoint prefix while giving the selected session
+        // priority. Elision affects presentation only, never action identity.
+        let minimum_label = usize::from(width / 3).min(8).min(available - 1);
+        let session_width = usize::from(display_width(session)).min(available - minimum_label);
+        let label_width = available - session_width;
+        self.scope = format!(
+            "{}{separator}{}",
+            crate::ui::truncate_end(label, label_width),
+            crate::ui::truncate_end(session, session_width)
+        );
+    }
+
     fn filter(&mut self, query_changed: bool) {
         let query = self.query.as_str().to_lowercase();
         let terms = query.split_whitespace().collect::<Vec<_>>();
@@ -295,8 +325,24 @@ impl MissionControl {
     }
     pub(super) fn selected_index(&self) -> Option<usize> {
         self.rows.iter().position(|row| {
-            row.selection.is_some() && row.selection.as_ref() == self.selected.as_ref()
+            row.selection
+                .as_ref()
+                .is_some_and(|selection| self.selection_matches(selection))
         })
+    }
+
+    /// Keep same-boot logical selection visible without adopting a fresh action lease.
+    pub(super) fn selection_matches(&self, selection: &SpaceSelection) -> bool {
+        match (self.selected.as_ref(), selection) {
+            (Some(SpaceSelection::Target(previous)), SpaceSelection::Target(current)) => {
+                previous.endpoint_id == current.endpoint_id
+                    && previous.boot_id == current.boot_id
+                    && previous.focus == current.focus
+                    && previous.applicability == current.applicability
+            }
+            (Some(previous), current) => previous == current,
+            _ => false,
+        }
     }
 }
 
@@ -319,6 +365,9 @@ impl ClientShellState {
             MissionControl {
                 query: TextEditor::default(),
                 view: MissionControlView::Spaces,
+                scope: String::new(),
+                scope_source: None,
+                scope_width: None,
                 endpoint_id: self.active_endpoint_id.clone(),
                 stamp: None,
                 all_rows: Vec::new(),
@@ -352,6 +401,16 @@ impl ClientShellState {
         else {
             return;
         };
+        if control
+            .scope_source
+            .as_ref()
+            .is_none_or(|(label, session)| {
+                label != &endpoint.label || session != &endpoint.session_name
+            })
+        {
+            control.scope_source = Some((endpoint.label.clone(), endpoint.session_name.clone()));
+            control.scope_width = None;
+        }
         control.mission_worktree_available = endpoint.status == ClientEndpointStatus::Online
             && endpoint.organization_supported
             && endpoint.organization.is_some()
@@ -441,7 +500,7 @@ impl ClientShellState {
                         .collect::<Vec<_>>();
                     let current = choices
                         .iter()
-                        .position(|choice| Some(*choice) == control.selected.as_ref());
+                        .position(|choice| control.selection_matches(choice));
                     let delta = match key.code {
                         KeyCode::Up => -1,
                         KeyCode::Down => 1,
@@ -507,6 +566,7 @@ impl ClientShellState {
             return;
         };
         let geometry = SpaceGeometry::new(cols, rows, control.rows.len());
+        control.fit_scope(geometry.header.width);
         let viewport = usize::from(geometry.body.height).max(1);
         control.scroll = control
             .scroll

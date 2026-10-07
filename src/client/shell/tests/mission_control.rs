@@ -1,5 +1,147 @@
 use super::*;
 
+#[test]
+fn mc_s9_missing_worktree_preparation_method_disables_only_contextual_action() {
+    let mut state = mission_creation_client();
+    state.set_endpoint_methods(Some(vec![
+        "organization.get".into(),
+        "worktree.create_in_mission".into(),
+    ]));
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\tempty\x0e");
+    let prepare = state.handle_input_bytes(b"\r");
+    assert!(prepare.actions.is_empty());
+    assert!(
+        state
+            .visible_endpoint_notice
+            .as_ref()
+            .is_some_and(|n| n.persistent),
+        "missing source-preparation method is a persistent contextual outcome"
+    );
+    state.handle_input_bytes(b"\x1b");
+    assert!(state
+        .handle_input_bytes(b"ordinary terminal")
+        .requests
+        .iter()
+        .any(|r| matches!(r, ClientMessage::ClientShellPaneInput { .. })));
+    state.tick_notifications(std::time::Instant::now() + std::time::Duration::from_secs(60));
+    assert!(state.visible_endpoint_notice.is_some());
+}
+
+#[test]
+fn mc_s9_mission_worktree_preparation_failure_retains_contextual_history() {
+    let mut state = mission_creation_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\tempty\x0e");
+    let prepare = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &prepare.actions[..] else {
+        panic!("mission contextual source preparation");
+    };
+    assert_eq!(
+        crate::api::api_method_name(&request.method),
+        "worktree.list"
+    );
+    state.handle_endpoint_result(
+        "boot-1",
+        &request.id,
+        Err(ClientShellEndpointError {
+            code: Some("endpoint_timeout".into()),
+            message: "Source preparation timed out".into(),
+        }),
+    );
+    assert!(
+        state
+            .visible_endpoint_notice
+            .as_ref()
+            .is_some_and(|n| n.persistent),
+        "failure belongs to contextual creation, although preparation method is worktree.list"
+    );
+    state.handle_input_bytes(b"\x1bnormal shell input");
+    state.tick_notifications(std::time::Instant::now() + std::time::Duration::from_secs(60));
+    assert!(state.visible_endpoint_notice.is_some());
+}
+
+#[test]
+fn mc_s9_reconnect_arrow_moves_from_retained_logical_highlight() {
+    let mut state = mission_members_client();
+    open(&mut state, 140, 40);
+    state.handle_input_bytes(b"\tAgent runtime\x1b[B");
+    state.compose(140, 40).unwrap();
+    let snapshot = state.snapshot.as_deref().unwrap().clone();
+    let catalog = state.endpoints[0].organization.clone().unwrap();
+    state.mark_endpoint_disconnected(&ClientEndpointId::Local);
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Online);
+    state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 2, Box::new(snapshot));
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 2, catalog);
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    let mut frame = surface();
+    frame.projection_revision = state.snapshot.as_ref().unwrap().revision;
+    frame.surface_revision = 4;
+    state.set_pane_surface(frame);
+    state.compose(140, 40).unwrap();
+    assert!(
+        state.handle_input_bytes(b"\r").actions.is_empty(),
+        "old action remains rejected"
+    );
+    state.handle_input_bytes(b"\x1b[B");
+    let input = state.handle_input_bytes(b"\r");
+    assert!(
+        matches!(&input.actions[..], [ClientShellAction::Endpoint { request, .. }] if matches!(&request.method, crate::api::schema::Method::PaneFocus(p) if p.pane_id == "pane_2")),
+        "Down at last retained target clamps there; it must not jump to first target"
+    );
+}
+
+#[test]
+fn mc_s9_reconnect_keeps_logical_selection_visible_but_requires_fresh_action_capture() {
+    let mut state = parked_client();
+    open(&mut state, 106, 30);
+    state.handle_input_bytes(b"worker /actual");
+    let before = state.compose(106, 30).unwrap();
+    let before_rows = frame_rows(&before);
+    let y = before_rows
+        .iter()
+        .position(|r| r.contains("worker") && r.contains("pane_1"))
+        .unwrap();
+    let x = before_rows[y].find("worker").unwrap();
+    let selected_bg = before.cells[y * 106 + x].bg;
+    let snapshot = state.snapshot.as_deref().unwrap().clone();
+    let catalog = state.endpoints[0].organization.clone().unwrap();
+    state.mark_endpoint_disconnected(&ClientEndpointId::Local);
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Online);
+    state.set_endpoint_organization_supported(&ClientEndpointId::Local, true);
+    state.cache_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 2, Box::new(snapshot));
+    state.set_endpoint_organization_for_generation(&ClientEndpointId::Local, 2, catalog);
+    state.activate_endpoint_projection(&ClientEndpointId::Local);
+    state.set_pane_surface(surface());
+    let after = state.compose(106, 30).unwrap();
+    let rows = frame_rows(&after);
+    let y = rows
+        .iter()
+        .position(|r| r.contains("worker") && r.contains("pane_1"))
+        .unwrap();
+    let x = rows[y].find("worker").unwrap();
+    assert!(
+        rows.iter().any(|r| r.contains("worker /actual")),
+        "query survives reconnect"
+    );
+    assert_eq!(
+        after.cells[y * 106 + x].bg,
+        selected_bg,
+        "same-boot logical selection stays visibly selected"
+    );
+    assert!(
+        state.handle_input_bytes(b"\r").actions.is_empty(),
+        "abandoned capture cannot dispatch"
+    );
+    state.handle_input_bytes(b"\x1b[B");
+    let input = state.handle_input_bytes(b"\r");
+    assert!(
+        matches!(&input.actions[..], [ClientShellAction::Endpoint { request, .. }] if matches!(&request.method, crate::api::schema::Method::PaneFocus(p) if p.pane_id == "pane_1")),
+        "fresh explicit selection routes exact surviving pane"
+    );
+}
+
 fn mission_creation_client() -> ClientShellState {
     let mut state = mission_members_client();
     let mut snap = state.snapshot.as_deref().unwrap().clone();

@@ -497,6 +497,16 @@ impl ClientShellState {
                 boot_id,
                 generation,
             } => {
+                if endpoint_id != self.active_endpoint_id
+                    || !self.endpoints.iter().any(|e| {
+                        e.endpoint_id == endpoint_id
+                            && e.snapshot_generation == generation
+                            && e.snapshot.as_ref().is_some_and(|s| s.boot_id == boot_id)
+                    })
+                {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
                 match action {
                     ClientContextMenuAction::NewMission => self.open_new_mission(outcome),
                     ClientContextMenuAction::MissionDefinition(index) => {

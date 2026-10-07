@@ -1,5 +1,17 @@
 use super::*;
 
+fn catalog_current(endpoint: &ClientShellEndpoint) -> bool {
+    endpoint.status == ClientEndpointStatus::Online
+        && endpoint.organization_supported
+        && endpoint.organization.as_ref().is_some_and(|catalog| {
+            endpoint.organization_generation == endpoint.snapshot_generation
+                && endpoint
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.boot_id == catalog.boot_id)
+        })
+}
+
 pub(super) fn pending_label(method: &str) -> Option<&'static str> {
     match method {
         "collection.set_hibernating" => Some(" updating Hibernate…"),
@@ -93,27 +105,11 @@ impl ClientShellState {
     pub(super) fn missions_available(&self) -> bool {
         self.endpoints
             .iter()
-            .find(|e| e.endpoint_id == self.active_endpoint_id)
-            .is_some_and(|e| {
-                e.organization_supported
-                    && e.methods.as_ref().is_some_and(|methods| {
-                        ["organization.get", "mission.create", "mission.assign"]
-                            .iter()
-                            .all(|method| methods.contains(*method))
-                    })
-            })
+            .any(|e| e.endpoint_id == self.active_endpoint_id && catalog_current(e))
     }
 
     pub(super) fn tab_mission_assignment_available(&self) -> bool {
-        self.endpoints
-            .iter()
-            .find(|e| e.endpoint_id == self.active_endpoint_id)
-            .is_some_and(|e| {
-                e.organization_supported
-                    && e.methods.as_ref().is_some_and(|m| {
-                        m.contains("organization.get") && m.contains("mission.assign")
-                    })
-            })
+        self.organization_method_available("mission.assign")
     }
     pub(super) fn open_missions(&mut self, outcome: &mut ClientShellInput) {
         if !self.missions_available() {
@@ -172,7 +168,7 @@ impl ClientShellState {
         }));
     }
     pub(super) fn open_new_mission(&mut self, outcome: &mut ClientShellInput) {
-        if !self.missions_available() {
+        if !self.organization_method_available("mission.create") {
             outcome.repaint |= self.push_endpoint_notice(
                 ClientEndpointNoticeKind::Unsupported,
                 "missions",
@@ -202,21 +198,8 @@ impl ClientShellState {
         }));
     }
     pub(super) fn restore_organization_notice(&mut self) {
-        let boot = self
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.boot_id.as_str());
-        if self
-            .organization_notices
-            .get(&self.active_endpoint_id)
-            .is_some_and(|notice| {
-                // A failed overview jump is client history, not a server fact.
-                notice.key.code != "organization.mission_control.target"
-                    && Some(notice.key.boot_id.as_str()) != boot
-            })
-        {
-            self.organization_notices.remove(&self.active_endpoint_id);
-        }
+        // Failed actions are client history, retained until explicit dismissal.
+        // A new boot changes mutation authority, not the outcome of earlier input.
         if self.visible_endpoint_notice.is_none() {
             self.visible_endpoint_notice = self
                 .organization_notices
@@ -229,7 +212,7 @@ impl ClientShellState {
         workspace_id: String,
         outcome: &mut ClientShellInput,
     ) {
-        if !self.organization_available() {
+        if !self.organization_method_available("collection.assign_family") {
             outcome.repaint |= self.push_endpoint_notice(
                 ClientEndpointNoticeKind::Unsupported,
                 "organization",
@@ -313,26 +296,8 @@ impl ClientShellState {
         }
     }
 
-    pub(super) fn organization_available(&self) -> bool {
-        self.endpoints
-            .iter()
-            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
-            .is_some_and(|endpoint| {
-                endpoint.organization_supported
-                    && endpoint.methods.as_ref().is_some_and(|methods| {
-                        [
-                            "organization.get",
-                            "collection.create",
-                            "collection.assign_family",
-                        ]
-                        .iter()
-                        .all(|method| methods.contains(*method))
-                    })
-            })
-    }
-
     pub(super) fn open_new_collection(&mut self, outcome: &mut ClientShellInput) {
-        if !self.organization_available() {
+        if !self.organization_method_available("collection.create") {
             outcome.repaint |= self.push_endpoint_notice(
                 ClientEndpointNoticeKind::Unsupported,
                 "organization",
@@ -344,8 +309,31 @@ impl ClientShellState {
         self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
             title: "new collection",
             input: TextEditor::default(),
-            target: ClientRenameTarget::NewCollection,
+            target: ClientRenameTarget::NewCollection {
+                endpoint_id: self.active_endpoint_id.clone(),
+                boot_id: self
+                    .snapshot
+                    .as_ref()
+                    .map(|s| s.boot_id.clone())
+                    .unwrap_or_default(),
+                generation: self
+                    .endpoints
+                    .iter()
+                    .find(|e| e.endpoint_id == self.active_endpoint_id)
+                    .and_then(|e| e.snapshot_generation),
+            },
         }));
+    }
+
+    pub(super) fn organization_method_available(&self, method: &str) -> bool {
+        self.endpoints.iter().any(|endpoint| {
+            endpoint.endpoint_id == self.active_endpoint_id
+                && catalog_current(endpoint)
+                && endpoint
+                    .methods
+                    .as_ref()
+                    .is_some_and(|methods| methods.contains(method))
+        })
     }
 
     pub(crate) fn set_endpoint_organization_for_generation(

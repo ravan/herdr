@@ -956,6 +956,8 @@ only those actions and show a client-local notice; they do not disconnect the UI
 or timed-out actions are also reported without ending the connection. Servers
 from before endpoint generation 1 need one final update.
 
+Organization catalogs are scoped to one endpoint session. Clients accept a complete catalog only for the current connection generation and server boot. Organization mutations wait for that catalog and their individually advertised method. Reconnect refreshes confirmed data; failures remain client-local and preserve terminal access on other compatible endpoints. An unsupported creation or assignment method does not disable independently supported catalog reads or maintenance.
+
 The numbered binary protocol remains for same-install and internal operations,
 including direct terminal attach and live handoff. Check `ping` or `herdr status`
 before using those operations across different builds. JSON API clients should
