@@ -590,7 +590,7 @@ fn reconnect_word_selection_tracks_content_changes() {
             next_surface.frame.cells[14].symbol = " ".into();
         }
         let endpoint_id = state.active_endpoint_id.clone();
-        let snapshot = state.snapshot.as_ref().unwrap().clone();
+        let snapshot = Box::new(state.snapshot.as_deref().unwrap().clone());
         state.mark_endpoint_disconnected(&endpoint_id);
         state.cache_endpoint_snapshot_inactive_for_generation(&endpoint_id, 1, snapshot);
         state.set_endpoint_status(

@@ -213,6 +213,7 @@ fn endpoint_notice_and_multiline_diagnostic_cover_the_actual_rows() {
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
     state.visible_endpoint_notice = Some(ClientVisibleEndpointNotice {
+        persistent: false,
         key: ClientEndpointNoticeKey {
             boot_id: "boot-1".into(),
             kind: ClientEndpointNoticeKind::Rejected,
@@ -257,6 +258,7 @@ fn every_dialog_and_menu_occludes_its_panel_not_the_whole_screen() {
             },
         }),
         ClientShellOverlay::ConfirmClose(ClientConfirmCloseOverlay {
+            organization: None,
             workspace_id: "ws_1".into(),
             close_group: false,
             tab_target: None,
@@ -276,6 +278,9 @@ fn every_dialog_and_menu_occludes_its_panel_not_the_whole_screen() {
             filter: None,
         }),
         ClientShellOverlay::WorktreeCreate(ClientWorktreeCreateOverlay {
+            source_capture: None,
+            mission: None,
+            mission_available: false,
             source_workspace_id: "ws_1".into(),
             repo_name: "repo".into(),
             branch: "branch".into(),
@@ -303,6 +308,8 @@ fn every_dialog_and_menu_occludes_its_panel_not_the_whole_screen() {
             target: ClientContextMenuTarget::Tab {
                 tab_id: "tab_1".into(),
                 workspace_id: "ws_1".into(),
+                mission_context: None,
+                mission: None,
             },
             x: 35,
             y: 8,

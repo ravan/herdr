@@ -14,6 +14,9 @@ vt_c: *std.Build.Module,
 /// The libghostty-vt version
 version: std.SemanticVersion,
 
+/// Target-specific libc configuration forwarded to library compilation.
+windows_libc: ?[]const u8,
+
 /// Static library paths for vendored SIMD dependencies. Populated
 /// only when the dependencies are built from source (not provided
 /// by the system via -Dsystem-integration). Used to produce a
@@ -97,6 +100,7 @@ fn initInner(
         ),
 
         .version = cfg.lib_version,
+        .windows_libc = cfg.windows_libc,
 
         .simd_libs = simd_libs,
     };
@@ -146,6 +150,7 @@ fn initVt(
         if (b.lazyDependency("wuffs", .{
             .target = cfg.target,
             .optimize = cfg.optimize,
+            .@"windows-libc" = if (cfg.target.result.os.tag == .windows) cfg.windows_libc else null,
         })) |dep| {
             vt.addImport("wuffs", dep.module("wuffs"));
         }

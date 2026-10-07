@@ -135,7 +135,7 @@ fn system_notification_clicks_keep_endpoint_and_boot_identity() {
             .iter_mut()
             .find(|endpoint| endpoint.endpoint_id == endpoint_id)
             .unwrap();
-        let snapshot = endpoint.snapshot.as_mut().unwrap();
+        let snapshot = std::sync::Arc::make_mut(endpoint.snapshot.as_mut().unwrap());
         snapshot.boot_id = "replacement-boot".into();
         assert!(
             state
@@ -149,7 +149,7 @@ fn system_notification_clicks_keep_endpoint_and_boot_identity() {
             .iter_mut()
             .find(|endpoint| endpoint.endpoint_id == endpoint_id)
             .unwrap();
-        let snapshot = endpoint.snapshot.as_mut().unwrap();
+        let snapshot = std::sync::Arc::make_mut(endpoint.snapshot.as_mut().unwrap());
         snapshot.boot_id = target.boot_id.clone();
         snapshot.panes.clear();
         assert!(
@@ -214,14 +214,17 @@ fn machine_diagnostic_badge_reopens_notice_without_collapsing_machine() {
 fn state_with_scrollable_agents() -> (ClientShellState, ClientEndpointId) {
     let (mut state, remote) = state_with_remote();
     for endpoint_id in [ClientEndpointId::Local, remote.clone()] {
-        let mut projection = state
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-            .unwrap()
-            .snapshot
-            .clone()
-            .unwrap();
+        let mut projection = Box::new(
+            state
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+                .unwrap()
+                .snapshot
+                .as_deref()
+                .unwrap()
+                .clone(),
+        );
         projection.agents = (0..8)
             .map(|index| ClientShellAgent {
                 pane_id: format!("pane_{}", index + 1),
@@ -300,14 +303,17 @@ fn agent_navigation_reveals_target_using_destination_sort() {
 
     let (mut state, remote) = state_with_scrollable_agents();
     for (endpoint_id, base) in [(ClientEndpointId::Local, 0), (remote.clone(), 8)] {
-        let mut projection = state
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-            .unwrap()
-            .snapshot
-            .clone()
-            .unwrap();
+        let mut projection = Box::new(
+            state
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+                .unwrap()
+                .snapshot
+                .as_deref()
+                .unwrap()
+                .clone(),
+        );
         for (index, agent) in projection.agents.iter_mut().enumerate() {
             agent.state_change_seq = base + index as u64;
         }
@@ -470,14 +476,17 @@ fn local_agent_click_can_cancel_a_pending_remote_switch() {
 fn aggregate_agent_scroll_still_clamps_when_rows_shrink_on_activation() {
     let (mut state, remote) = state_with_scrollable_agents();
     for endpoint_id in [ClientEndpointId::Local, remote.clone()] {
-        let mut projection = state
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-            .unwrap()
-            .snapshot
-            .clone()
-            .unwrap();
+        let mut projection = Box::new(
+            state
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+                .unwrap()
+                .snapshot
+                .as_deref()
+                .unwrap()
+                .clone(),
+        );
         projection.revision += 1;
         projection.agents.truncate(1);
         state.set_endpoint_snapshot(&endpoint_id, projection);
@@ -492,7 +501,7 @@ fn aggregate_agent_scroll_still_clamps_when_rows_shrink_on_activation() {
 #[test]
 fn same_machine_reboot_still_resets_agent_scroll() {
     let (mut state, _) = state_with_scrollable_agents();
-    let mut projection = state.snapshot.clone().unwrap();
+    let mut projection = Box::new(state.snapshot.as_deref().unwrap().clone());
     projection.boot_id = "restarted-local".into();
     state.cache_endpoint_snapshot(&ClientEndpointId::Local, projection);
     assert!(state.activate_endpoint_projection(&ClientEndpointId::Local));
@@ -2063,7 +2072,7 @@ fn disconnected_active_endpoint_freezes_surface_and_marks_cached_ui_stale() {
         .iter_mut()
         .find(|endpoint| endpoint.endpoint_id == endpoint_id)
         .expect("remote endpoint");
-    endpoint.snapshot.as_mut().expect("remote snapshot").agents =
+    Arc::make_mut(endpoint.snapshot.as_mut().expect("remote snapshot")).agents =
         vec![agent("remote agent", AgentStatus::Blocked, 1)];
     assert!(state.activate_endpoint_projection(&endpoint_id));
     let mut remote_surface = surface();
@@ -2373,15 +2382,17 @@ fn mobile_foreign_agent_and_workspace_targets_activate_their_endpoint() {
     use crate::api::schema::AgentStatus;
 
     let (mut state, endpoint_id) = state_with_remote();
-    state
-        .endpoints
-        .iter_mut()
-        .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-        .expect("remote endpoint")
-        .snapshot
-        .as_mut()
-        .expect("remote snapshot")
-        .agents = vec![agent("remote agent", AgentStatus::Working, 2)];
+    Arc::make_mut(
+        state
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+            .expect("remote endpoint")
+            .snapshot
+            .as_mut()
+            .expect("remote snapshot"),
+    )
+    .agents = vec![agent("remote agent", AgentStatus::Working, 2)];
     state.mode = ClientShellMode::Navigate;
     state.compose(44, 30).expect("mobile switcher");
     let remote_agent = state
@@ -2448,15 +2459,17 @@ fn cached_offline_navigator_and_mobile_targets_are_dimmed_and_disabled() {
     use crate::api::schema::AgentStatus;
 
     let (mut state, endpoint_id) = state_with_remote();
-    state
-        .endpoints
-        .iter_mut()
-        .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-        .expect("remote endpoint")
-        .snapshot
-        .as_mut()
-        .expect("remote snapshot")
-        .agents = vec![agent("remote agent", AgentStatus::Blocked, 2)];
+    Arc::make_mut(
+        state
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+            .expect("remote endpoint")
+            .snapshot
+            .as_mut()
+            .expect("remote snapshot"),
+    )
+    .agents = vec![agent("remote agent", AgentStatus::Blocked, 2)];
     state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Reconnecting);
 
     state.open_navigator_overlay();
@@ -2543,15 +2556,17 @@ fn focus_agent_index_uses_online_aggregate_rows() {
     use crate::api::schema::AgentStatus;
 
     let (mut state, endpoint_id) = state_with_remote();
-    state
-        .endpoints
-        .iter_mut()
-        .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-        .expect("remote endpoint")
-        .snapshot
-        .as_mut()
-        .expect("remote snapshot")
-        .agents = vec![agent("remote agent", AgentStatus::Working, 2)];
+    Arc::make_mut(
+        state
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+            .expect("remote endpoint")
+            .snapshot
+            .as_mut()
+            .expect("remote snapshot"),
+    )
+    .agents = vec![agent("remote agent", AgentStatus::Working, 2)];
     let focus_agent =
         |index| crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusAgent(index));
 
@@ -2600,15 +2615,17 @@ fn collapsed_aggregate_workspace_status_uses_its_status_color() {
     use crate::api::schema::AgentStatus;
 
     let (mut state, endpoint_id) = state_with_remote();
-    state
-        .endpoints
-        .iter_mut()
-        .find(|endpoint| endpoint.endpoint_id == endpoint_id)
-        .expect("remote endpoint")
-        .snapshot
-        .as_mut()
-        .expect("remote snapshot")
-        .workspaces[0]
+    Arc::make_mut(
+        state
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+            .expect("remote endpoint")
+            .snapshot
+            .as_mut()
+            .expect("remote snapshot"),
+    )
+    .workspaces[0]
         .agent_status = AgentStatus::Blocked;
     state.sidebar_collapsed = true;
 

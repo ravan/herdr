@@ -121,6 +121,20 @@ impl EndpointAgentPresentation {
         surface: &PaneSurfaceFrame,
         outer_focused: Option<bool>,
     ) -> bool {
+        let changed = self.acknowledge_surface_watermark(snapshot, surface, outer_focused);
+        if changed {
+            self.apply_acknowledged_status(snapshot);
+        }
+        changed
+    }
+
+    /// Advance client-owned watermarks without requiring mutable snapshot ownership.
+    pub(super) fn acknowledge_surface_watermark(
+        &mut self,
+        snapshot: &ClientShellSnapshot,
+        surface: &PaneSurfaceFrame,
+        outer_focused: Option<bool>,
+    ) -> bool {
         if outer_focused == Some(false)
             || self.boot_id.as_deref() != Some(surface.boot_id.as_str())
             || snapshot.boot_id != surface.boot_id
@@ -144,13 +158,21 @@ impl EndpointAgentPresentation {
                 changed = true;
             }
         }
-        if changed {
-            for agent in &mut snapshot.agents {
-                agent.agent_status = self.projected_status(agent);
-            }
-            project_aggregate_status(snapshot);
-        }
         changed
+    }
+
+    pub(super) fn acknowledged_status_changed(&self, snapshot: &ClientShellSnapshot) -> bool {
+        snapshot
+            .agents
+            .iter()
+            .any(|agent| agent.agent_status != self.projected_status(agent))
+    }
+
+    pub(super) fn apply_acknowledged_status(&self, snapshot: &mut ClientShellSnapshot) {
+        for agent in &mut snapshot.agents {
+            agent.agent_status = self.projected_status(agent);
+        }
+        project_aggregate_status(snapshot);
     }
 
     pub(super) fn seen(&self, agent: &ClientShellAgent) -> bool {

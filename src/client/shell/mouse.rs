@@ -677,6 +677,14 @@ impl ClientShellState {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
+        if matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_))) {
+            // Finish a press already owed to a terminal; all new gestures belong
+            // to the overview, including clicks outside its visible panel.
+            if !matches!(mouse.kind, MouseEventKind::Up(_)) || self.pane_mouse_gesture.is_none() {
+                self.handle_mission_control_mouse(mouse, outcome);
+                return;
+            }
+        }
         self.update_link_hover(mouse, outcome);
         let point = (mouse.column, mouse.row);
         if self.mode == ClientShellMode::Navigate
@@ -997,6 +1005,7 @@ impl ClientShellState {
             && super::contains(self.hits.notification_toast, point)
         {
             self.visible_endpoint_notice = None;
+            self.organization_notices.remove(&self.active_endpoint_id);
             outcome.repaint = true;
             return;
         }
@@ -1429,7 +1438,7 @@ impl ClientShellState {
                     if let Some((_, index)) = row_hit {
                         self.activate_context_menu_item(index, outcome);
                     } else {
-                        self.overlay = None;
+                        self.cancel_worktree_mission_picker();
                         outcome.repaint = true;
                     }
                 }
@@ -1477,6 +1486,10 @@ impl ClientShellState {
                             self.overlay = None;
                             outcome.repaint = true;
                         }
+                    } else if matches!(self.overlay, Some(ClientShellOverlay::WorktreeCreate(_)))
+                        && super::contains(self.hits.overlay_clear, point)
+                    {
+                        self.open_worktree_mission_picker(outcome);
                     } else if super::contains(self.hits.worktree_search, point) {
                         if let Some(ClientShellOverlay::WorktreeOpen(open)) = self.overlay.as_mut()
                         {
@@ -1778,6 +1791,44 @@ impl ClientShellState {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Right) => {
+                if let Some((_, endpoint, pane_id)) = self
+                    .hits
+                    .endpoint_agents
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    if endpoint != self.active_endpoint_id {
+                        outcome.repaint |= self.push_endpoint_notice(ClientEndpointNoticeKind::Rejected, "mission.endpoint_scope", "Select endpoint first", "Open this agent's endpoint through normal navigation before assigning its pane.");
+                        return;
+                    }
+                    self.open_pane_context_menu(pane_id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
+                if let Some((_, pane_id)) = self
+                    .hits
+                    .agents
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.open_pane_context_menu(pane_id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
+                if let Some((_, endpoint, id)) = self
+                    .hits
+                    .collections
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.open_collection_context_menu(endpoint, id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
+
                 let pane_hit = self
                     .hits
                     .panes
@@ -2011,7 +2062,17 @@ impl ClientShellState {
                 }
                 if super::contains(self.hits.agent_sort_toggle, point) {
                     let sort = match self.config.agent_panel_sort {
-                        crate::config::AgentPanelSortConfig::Spaces => {
+                        crate::config::AgentPanelSortConfig::Spaces
+                            if self
+                                .endpoints
+                                .iter()
+                                .find(|e| e.endpoint_id == self.active_endpoint_id)
+                                .is_some_and(|e| e.organization.is_some()) =>
+                        {
+                            crate::config::AgentPanelSortConfig::Missions
+                        }
+                        crate::config::AgentPanelSortConfig::Spaces
+                        | crate::config::AgentPanelSortConfig::Missions => {
                             crate::config::AgentPanelSortConfig::Priority
                         }
                         crate::config::AgentPanelSortConfig::Priority => {
@@ -2023,6 +2084,26 @@ impl ClientShellState {
                     self.agent_scroll = 0;
                     self.persist_chrome_preferences(outcome);
                     outcome.repaint = true;
+                    return;
+                }
+                if let Some((_, endpoint)) = self
+                    .hits
+                    .hibernate
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.toggle_hibernate(&endpoint, outcome);
+                    return;
+                }
+                if let Some((_, endpoint, id)) = self
+                    .hits
+                    .collections
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.toggle_collection(&endpoint, id, outcome);
                     return;
                 }
                 if self.handle_endpoint_machine_click(point, outcome) {

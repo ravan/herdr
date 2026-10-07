@@ -101,3 +101,69 @@ herdr --remote workbox
 Use `herdr` for local work. Use `ssh you@server` then `herdr` when you want Herdr to behave like tmux on that remote shell or when you are using a phone SSH client. Use `herdr --remote <host>` for a local UI attached to one remote session, including local clipboard image paste. To keep Local and several SSH machines in one window, save them with `herdr machine add <host> --label <label>`; see [Connecting machines](/docs/connecting-machines/).
 
 For remote bootstrap details, named remote sessions, custom binaries, and direct terminal attach, see [Persistence and remote access](/docs/persistence-remote/).
+
+## Collections and Hibernate
+
+Use **new collection** in the menu to create a collection. Right-click a workspace and choose **Move family to collection...** to organize it with its managed worktrees.
+
+To park a collection, right-click its header and choose **Hibernate collection**. The collection moves under **Hibernate**, which starts collapsed on a new client. Click Hibernate to expand it, then right-click a parked collection and choose **Bring collection back** to return it to the ordinary list.
+
+Parking preserves the current terminal and input target. Agents keep running and their notifications still arrive. An explicit jump to a parked agent reveals its location without bringing the collection back. The parked flag survives server restart; expansion choices belong to each client. Servers that do not advertise Hibernate keep their existing collection and terminal controls.
+
+## Missions
+
+Open **Missions…** in the menu and choose **New mission…** to name an objective. The menu lists missions and their tab counts, including empty missions. Right-click an existing tab, choose **Add to mission…**, then select a mission. A **◆** indicator and the mission name appear after the server confirms the assignment.
+
+Each tab has one explicit mission. Choosing another mission replaces its assignment without recreating terminals or changing focus. Renaming and reordering a tab preserve membership. Closing a tab removes its assignment and retains the mission, even when no tabs remain. Definitions and valid assignments survive restart and live handoff. Missions also remain available for tabs in parked collections.
+
+JSON callers can use `mission.create` with a name and optional objective, and `mission.assign` with a mission ID and a target such as `{"kind":"tab","tab_id":"w1:t1"}`. Use the current public tab ID from `tab.list`. `tab.transfer` requires `tab_id`, destination `workspace_id`, and `insert_index`; it moves the complete tab and updates its assignment to the resulting public ID. A rejected transfer preserves the original assignment. `tab.move` continues to reorder within one workspace.
+
+Panes inherit their tab's mission. Right-click an agent row or terminal pane and choose **Assign mission…** to override that pane only. **Clear override** restores the tab's mission, as explained in the menu. Tab reassignment leaves explicit pane overrides intact. New splits inherit the tab; moving a pane preserves its override or inherits the destination tab's mission. Membership follows the terminal pane across agent restarts. Shell and editor panes can have assignments but do not appear as agent rows.
+
+Click the agents section's grouping label to cycle through spaces, missions, and priority. Mission grouping uses the existing agent labels and status, includes agents in parked collections with a **Hibernate** label, and keeps each row focusable. Select an endpoint through normal navigation before assigning its agents; catalogs remain separate.
+
+JSON callers use `mission.assign_pane` with `pane_id` and `mission_id`, and `mission.clear_pane_override` with `pane_id`. Use the current public pane ID from `pane.list`. `organization.get` returns explicit overrides in `pane_mission_assignments`; effective membership falls back to the owning tab's assignment. These methods are advertised independently, so unavailable actions leave collections, tab missions, and terminals usable.
+
+
+Servers that do not advertise mission methods retain their existing collection and terminal controls.
+
+## Mission control
+
+Choose **Mission control** in the menu or press `ctrl+b m` to open **Spaces**. Configure another binding with `keys.mission_control`, using the same syntax as other actions.
+
+The overview shows the selected endpoint and session. Local sessions, saved SSH machines, and direct `--remote` connections keep separate catalogs. Attached clients share confirmed membership and parking while each client keeps its own expansion choices. Direct SSH launches restore these choices for the same target and session, independently of Local sessions. Each server mutation checks its own advertised method, so a server that supports reading or renaming missions can keep those actions available without supporting creation or assignment. A confirmed companion catalog also lets the definition menu open when no getter method is advertised. Narrow terminals show an ellipsis for long endpoint or session names while keeping target rows and public IDs visible. Widen the terminal to see the complete session name.
+
+After a connection is restored, Herdr refreshes the complete catalog. Search and the surviving logical selection stay visible. An action captured before reconnect requires an explicit fresh row selection; a changed server boot or removed membership cannot redirect it to a reused ID. Failed organization and mission worktree actions keep their local notices through typing and reconnect until you dismiss them.
+
+In **Missions**, select a mission heading or member and click **new worktree** or press `ctrl+n`. A heading asks you to choose an open repository parent; a linked member uses its existing family parent. The native **new worktree** form shows an optional **mission** choice. Click it or press Tab to choose a mission or **None**. Cancelling the picker preserves your branch text. The checkout inherits its family’s collection, and its initial tab joins the selected mission before creation succeeds. Start an agent normally in that tab. Older servers disable this mission action while ordinary worktree creation remains available. If Git creates the checkout but the mission disappears or terminal creation fails, the error reports the retained checkout path.
+
+Click **Spaces**, **Missions**, or **Needs you**, or use Tab and Shift+Tab to switch views. **Missions** lists empty missions, explicitly assigned tabs, and their effective pane members. A pane override takes precedence over its tab's mission; each pane appears once. Rows show their location, membership source, public ID, and **Hibernate** marker. Right-click an existing tab or pane row to use the mission assignment dialog. Each assignment action depends on its own server capability and updates after confirmation.
+
+**Needs you** lists agents that Herdr currently reports as blocked, including agents in parked collections. Select a row to jump to its original terminal and reply there. The row leaves the queue when Herdr observes the state change. If a selected member leaves its mission or an agent stops being blocked, Enter shows a notice until you explicitly select a current row. Editing search or switching views cannot redirect that stale action.
+
+Search workspace and tab names, branches, actual locations, collection names, mission assignments, and available pane or agent labels. Search includes parked targets marked **Hibernate**, even when their collection or family is collapsed. Click collection, family, or Hibernate headings to expand or collapse this overview. These choices belong to the client.
+
+Use the arrow keys or Page Up/Page Down to select, Enter or a row click to jump, and the wheel or scrollbar to scroll. Narrow terminals use compact rows. Each result identifies an existing workspace, tab, or pane. A jump reveals a parked location without bringing its collection back. A closed or disconnected target shows a persistent local notice; it does not redirect to another target with the same name.
+
+While the overview is open, search text, paste, keys, and mouse input belong to it. Press Escape or click **esc close** to cancel and keep the original pane focus, scrollback, zoom, layout, and running jobs. Catalogs remain separate for each endpoint.
+
+## Maintain collections and missions
+
+Right-click a collection header to **Rename collection**, **Move earlier**, **Move later**, or **Delete collection**. Ordering includes parked collections. Deletion asks for confirmation: workspaces stay open and families return to **Uncollected**. To remove one family, right-click its workspace, choose **Move family to collection...**, then **Remove from collection (Uncollected)**.
+
+Choose **Missions** in the menu, then select the mission by name and ID. Its menu provides **Rename mission**, **Edit objective**, **Move earlier**, **Move later**, and **Delete mission**. An empty objective clears it. Confirming deletion clears that mission’s tab and pane assignments while terminals and agents keep running. IDs determine identity; renaming or ordering a definition does not change membership or terminal focus.
+
+Right-click a tab and choose **Remove tab from mission** to clear its assignment. In a pane menu, **Clear override** restores the tab’s mission, so a pane can remain in the same mission afterward. **Remove inherited tab membership** asks for confirmation and affects every pane inheriting from that tab; explicit pane overrides stay assigned. Herdr has no separate per-pane exclusion from an inherited mission.
+
+Empty collections and missions remain saved. Empty overview rows explain how to assign existing members. **Membership and restore** in a definition menu explains public-ID membership and removal of unavailable targets during restore. Restore creates no replacement terminals for stale references. A managed repository family recovers its collection when reopened; a closed standalone workspace loses its family reference. Stale, deleted, reassigned, or unsupported actions show persistent local notices and keep other terminal controls usable.
+
+## Daily workflow
+
+1. Keep your editor and Git terminal in the same tab. Create collections such as **Infrastructure** and **Side quests**, then move repository families into them. Linked worktrees follow their family.
+2. Create a mission and assign the existing agent tabs. Use a pane override when only one pane belongs to a different objective. Start agents normally; creating a mission or worktree does not launch them.
+3. Hibernate the collections you want to park. The current pane, running jobs and agent status remain available. Open Mission control with `ctrl+b m`, including on narrow terminals, and search for a name, location or public ID.
+4. Use **Missions** to jump between parent and worktree members. Use **Needs you** to find an actual blocked agent, jump to its original terminal and answer there. Its row disappears after Herdr observes the reply. When labels are duplicated, search for the exact pane or tab ID.
+5. Move a pane through the existing pane controls. A move preserves the running terminal; a move across workspaces gives it a new public ID. After reconnect or restart, verify the endpoint, session and confirmed membership, and explicitly select a fresh row before acting. Process restoration follows the existing restore policy.
+6. Remove a tab assignment or clear a pane override when the objective changes. Clearing an override can reveal the inherited tab mission. Delete a mission or collection through its confirmation dialog when it is no longer needed; the checkouts and terminals remain available.
+
+The wheel and scrollbar browse a populated overview; arrow keys and Page Up/Page Down move its selection. Enter or a row click jumps to the selected target. Tab switches views. Escape closes the overview and preserves the original terminal context. If a server does not support an organization action, close its notice and use the existing workspace, tab and pane navigation.

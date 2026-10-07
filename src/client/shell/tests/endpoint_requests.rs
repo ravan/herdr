@@ -130,7 +130,7 @@ fn worktree_create_success_focuses_returned_tab_on_its_endpoint_after_snapshot_u
         }
         let (mut state, actions) = submit_worktree(state);
         let endpoint_id = state.active_endpoint_id.clone();
-        let mut updated = state.snapshot.clone().unwrap();
+        let mut updated = Box::new(state.snapshot.as_deref().unwrap().clone());
         let boot_id = updated.boot_id.clone();
         updated.revision += 1;
         updated.workspaces[0].label = "updated while creating".into();

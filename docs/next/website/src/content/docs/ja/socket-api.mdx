@@ -272,6 +272,12 @@ Worktree メソッドは Git チェックアウトを Herdr ワークスペー�
 {"id":"req_1","method":"worktree.create","params":{"workspace_id":"w1","branch":"worktree/api","focus":false}}
 ```
 
+`worktree.create_in_mission` は個別に対応状況を通知します。必須の `mission_id` と従来の作成パラメータを受け取り、最初のタブへの割り当てとファミリーのコレクションの継承を確認してから同じ `worktree_created` を返します。`worktree.create` の動作は変わりません。存在しないミッションは Git の実行前に拒否します。Git の実行中にミッションが削除された場合や、その後の端末作成に失敗した場合、エラーは作成済みのチェックアウトのパスを示し、復旧のためにチェックアウトを保持します。フォームのキャンセルは作成リクエストを送信しません。送信済みの作成には既存の非同期ポリシーを適用します。
+
+```json
+{"id":"req_mission","method":"worktree.create_in_mission","params":{"workspace_id":"w1","mission_id":"mission_1","branch":"worktree/objective","focus":false}}
+```
+
 既存のチェックアウトを開く:
 
 ```json
@@ -766,4 +772,49 @@ herdr agent wait w1:p1 --until blocked
 
 クライアント描画の Herdr UI は、ローカルサーバーと SSH サーバーに安定したエンドポイント世代を使います。クライアントとサーバーのビルドが一致する必要はありません。接続時にコアのスナップショット、画面、入力、blob コーデックを合意し、サーバーが対応 API メソッドと任意の能力を通知します。保存済み SSH マシンには、選択中のマシンだけがペイン画面を送信するための `surface_interest` と、通信のない接続の障害を検知する `health_check` が必要です。未対応のサーバーは明示的に更新するまで Attention になります。詳しくは[マシンへの接続](/ja/docs/connecting-machines/)を参照してください。メソッドがない場合は、そのサーバー上の該当アクションだけを無効にしてクライアント側通知を表示します。拒否やタイムアウトも接続を終了せず通知します。エンドポイント世代 1 より前のサーバーだけは最後の 1 回の更新が必要です。
 
+組織カタログはエンドポイントのセッションごとに独立しています。クライアントは現在の接続世代とサーバー起動 ID に一致する完全なカタログだけを採用します。組織の変更には、そのカタログと個別に公開された対応メソッドが必要です。再接続で確認済みデータを更新し、失敗はクライアント側の通知として保持します。他の互換エンドポイントの端末アクセスは継続します。作成や割り当てが未対応でも、個別に対応しているカタログの読み取りや管理操作は利用できます。
+
 番号付きバイナリプロトコルは、直接ターミナル接続やライブハンドオフなど、同一インストール内の内部操作に残ります。異なるビルド間でそれらを使う前に `ping` または `herdr status` を確認してください。JSON API クライアントは未知のフィールドを無視し、未対応メソッドを通常のエラーとして扱う必要があります。
+
+## 組織メタデータの管理
+
+各管理メソッドは個別に公開され、確認済みカタログとリビジョンを既存の `organization` 結果で返します。既存メソッドの形状とエンドポイントのコーデックは変更しません。ID は `organization.get`、`workspace.list`、`tab.list`、`pane.list` から取得します。
+
+名前は空白を除いた後に文字を含む必要があります。`to_index` は休止中のコレクションも含む全カタログの 0 始まりの絶対位置です。移動は他の定義の相対順序を保ち、削除後は連続した順序にします。同じ値への編集や、未割り当ての有効な対象の解除はリビジョンを変更しません。不明な ID、範囲外の位置、変更された割り当て、リビジョン容量の不足は状態を変更せずエラーを返します。
+
+`mission.set_objective` の `objective` キーは必須です。文字列で編集し、明示的な `null`、空文字列、空白だけの文字列で消去します。キーの省略は拒否します。解除には現在のコレクションまたはミッション ID が必要で、新しい割り当てを古い要求が解除することを防ぎます（`assignment_changed`）。ファミリーの解除は現在有効なファミリーが対象です。定義の削除は、その定義が所有する保持済みファミリー参照または明示的なタブとペインの割り当ても消去します。端末、プロセス、チェックアウト、フォーカスは維持します。
+
+| Method | Required parameters |
+| --- | --- |
+| `collection.rename` | `collection_id`, `name` |
+| `collection.move` | `collection_id`, `to_index` |
+| `collection.delete` | `collection_id` |
+| `collection.unassign_family` | `family_id`, `collection_id` |
+| `mission.rename` | `mission_id`, `name` |
+| `mission.move` | `mission_id`, `to_index` |
+| `mission.set_objective` | `mission_id`, `objective` (nullable) |
+| `mission.delete` | `mission_id` |
+| `mission.unassign` | `target` (tab), `mission_id` |
+
+```json
+{"id":"move","method":"mission.move","params":{"mission_id":"mission_1","to_index":0}}
+{"id":"clear_objective","method":"mission.set_objective","params":{"mission_id":"mission_1","objective":null}}
+{"id":"remove_member","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"uncollect","method":"collection.unassign_family","params":{"family_id":{"kind":"managed","key":"repository-family-key"},"collection_id":"collection_1"}}
+```
+
+### 組織管理の作業例
+
+割り当てる前に `organization.get` と現在のワークスペース、タブ、ペインの一覧を取得します。次の例は 1 つのセッションを表します。すべての ID を、そのエンドポイントで確認した ID に置き換えてください。各操作には対応するメソッドの公開が必要です。
+
+```json
+{"id":"assign_tab","method":"mission.assign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"park","method":"collection.set_hibernating","params":{"collection_id":"collection_1","hibernating":true}}
+{"id":"jump","method":"pane.focus","params":{"pane_id":"w1:p2"}}
+{"id":"move","method":"pane.move","params":{"pane_id":"w1:p2","destination":{"type":"tab","tab_id":"w2:t1","split":"right"},"focus":true}}
+{"id":"remove_tab","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+```
+
+以降の操作では、移動の結果が返した現在のペイン ID を使います。タブの割り当ては、明示的な上書きがないペインに適用されます。`mission.clear_pane_override` は継承を復元し、タブのミッションからペインを除外する操作ではありません。退避やメンバーの削除ではターミナルを停止しません。フォーカスは退避フラグを変えずに対象を表示します。実際の待機状態には元のターミナルで応答します。組織管理のメソッドは応答やエージェントの状態を生成しません。
+
+サーバーの起動識別子が変わったら、完全なカタログと現在の対象一覧を再取得してから操作します。組織管理のメソッドが失敗したり未対応でも、通常の入力やナビゲーションは引き続き利用できます。定義の削除は `worktree.remove` と別の操作で、チェックアウトを保持します。[作業手順](/ja/docs/how-to-work/)と [CLI リファレンス](/ja/docs/cli-reference/)を参照してください。

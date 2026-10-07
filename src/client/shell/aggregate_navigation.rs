@@ -10,6 +10,7 @@ pub(super) struct CachedEndpointSnapshot<'a> {
     pub(super) label: &'a str,
     pub(super) status: ClientEndpointStatus,
     pub(super) snapshot: &'a ClientShellSnapshot,
+    pub(super) pane_missions: &'a HashMap<String, super::organization::PaneMissionMembership>,
     pub(super) agent_recency: &'a HashMap<String, u64>,
     pub(super) agent_presentation: &'a super::endpoint_agent_state::EndpointAgentPresentation,
 }
@@ -36,6 +37,7 @@ pub(super) fn cached_endpoint_snapshots(
                     label: &endpoint.label,
                     status: endpoint.status,
                     snapshot,
+                    pane_missions: &endpoint.pane_missions,
                     agent_recency: &endpoint.agent_recency,
                     agent_presentation: &endpoint.agent_presentation,
                 })
@@ -160,6 +162,22 @@ fn sort_aggregate_rows(
     rows: &mut [AggregateAgentRow<'_>],
     sort: crate::config::AgentPanelSortConfig,
 ) {
+    if sort == crate::config::AgentPanelSortConfig::Missions {
+        rows.sort_by(|a, b| {
+            let am = a.endpoint.pane_missions.get(&a.agent.pane_id);
+            let bm = b.endpoint.pane_missions.get(&b.agent.pane_id);
+            (
+                a.endpoint.endpoint_index,
+                am.map_or(u64::MAX, |m| m.order),
+                am.and_then(|m| m.mission_id.as_ref()).map(|id| &id.0),
+            )
+                .cmp(&(
+                    b.endpoint.endpoint_index,
+                    bm.map_or(u64::MAX, |m| m.order),
+                    bm.and_then(|m| m.mission_id.as_ref()).map(|id| &id.0),
+                ))
+        });
+    }
     if sort == crate::config::AgentPanelSortConfig::Priority {
         rows.sort_by_key(|row| {
             (

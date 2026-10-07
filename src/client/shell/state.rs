@@ -13,6 +13,7 @@ pub(crate) enum ClientShellKeybindingSource {
 }
 
 pub(crate) struct ClientShellConfig {
+    pub(super) initial_endpoint_scope: Option<(String, String)>,
     pub(super) sidebar_width: u16,
     pub(super) sidebar_min_width: u16,
     pub(super) sidebar_max_width: u16,
@@ -83,6 +84,8 @@ pub(super) enum ClientMobileTarget {
 
 #[derive(Default)]
 pub(super) struct ShellHitMap {
+    pub(super) hibernate: Vec<(Rect, ClientEndpointId)>,
+    pub(super) collections: Vec<(Rect, ClientEndpointId, crate::organization::CollectionId)>,
     pub(super) machines: Vec<MachineHit>,
     pub(super) workspaces: Vec<WorkspaceHit>,
     pub(super) workspace_body: Rect,
@@ -118,6 +121,9 @@ pub(super) struct ShellHitMap {
     pub(super) overlay_primary: Rect,
     pub(super) overlay_clear: Rect,
     pub(super) overlay_cancel: Rect,
+    pub(super) mission_control_rows: Vec<(Rect, super::mission_control::SpaceSelection)>,
+    pub(super) mission_control_scrollbar: Rect,
+    pub(super) mission_control_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) navigator_popup: Rect,
     pub(super) navigator_search: Rect,
     pub(super) navigator_rows: Vec<(Rect, ClientNavigatorTarget)>,
@@ -285,6 +291,7 @@ pub(super) enum ClientShellOverlayKind {
     ConfirmClose,
     Help,
     Navigator,
+    MissionControl,
     WorktreeCreate,
     WorktreeOpen,
     WorktreeRemove,
@@ -295,6 +302,19 @@ pub(super) enum ClientShellOverlayKind {
 
 #[derive(Debug)]
 pub(super) enum ClientRenameTarget {
+    Collection(super::organization_maintenance::OrganizationCapture),
+    Mission(super::organization_maintenance::OrganizationCapture),
+    MissionObjective(super::organization_maintenance::OrganizationCapture),
+    NewCollection {
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+    },
+    NewMission {
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+    },
     NewWorkspace {
         source_workspace_id: Option<String>,
         cwd: Option<String>,
@@ -424,6 +444,9 @@ pub(super) struct ClientSettingsOverlay {
 
 #[derive(Debug)]
 pub(super) struct ClientWorktreeCreateOverlay {
+    pub(super) source_capture: Option<WorkspaceNavigationTarget>,
+    pub(super) mission: Option<crate::organization::Mission>,
+    pub(super) mission_available: bool,
     pub(super) source_workspace_id: String,
     pub(super) repo_name: String,
     pub(super) branch: TextEditor,
@@ -510,6 +533,26 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
+    AddToMission,
+    AssignPaneMission,
+    ClearPaneMissionOverride,
+    RemoveInheritedTabMission,
+    RemoveTabMission,
+    PaneMissionInfo,
+    AssignMission(usize),
+    NewMission,
+    MissionDefinition(usize),
+    OrganizationInfo,
+    DeleteOrganization,
+    EditMissionObjective,
+    RenameMission,
+    RenameCollection,
+    OrganizationEarlier,
+    OrganizationLater,
+    SetHibernating,
+    MoveFamilyToCollection,
+    AssignCollection(usize),
+    RemoveCollectionMembership,
     Rename,
     Close,
     NewWorktree,
@@ -529,6 +572,45 @@ pub(super) enum ClientContextMenuAction {
 
 #[derive(Debug)]
 pub(super) enum ClientContextMenuTarget {
+    MissionWorktreeSources {
+        intent: super::worktree_missions::MissionWorktreeIntent,
+        sources: Vec<(WorkspaceNavigationTarget, String)>,
+    },
+    WorktreeMissionPicker {
+        create: Box<ClientWorktreeCreateOverlay>,
+        missions: Vec<crate::organization::Mission>,
+    },
+    PaneMissionPicker {
+        context: super::pane_missions::PaneMissionMenuContext,
+        missions: Vec<crate::organization::Mission>,
+    },
+    Missions {
+        missions: Vec<(crate::organization::Mission, usize)>,
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+    },
+    MissionMaintenance {
+        capture: super::organization_maintenance::OrganizationCapture,
+    },
+    MissionPicker {
+        workspace: WorkspaceNavigationTarget,
+        tab_id: String,
+        missions: Vec<crate::organization::Mission>,
+    },
+    Collection {
+        endpoint_id: ClientEndpointId,
+        boot_id: String,
+        generation: Option<u64>,
+        collection_id: crate::organization::CollectionId,
+        hibernating: bool,
+    },
+    CollectionPicker {
+        workspace: WorkspaceNavigationTarget,
+        family_id: crate::organization::FamilyId,
+        current_collection: Option<crate::organization::CollectionId>,
+        collections: Vec<crate::organization::Collection>,
+    },
     Workspace {
         workspace_id: String,
         is_git: bool,
@@ -540,10 +622,13 @@ pub(super) enum ClientContextMenuTarget {
     Tab {
         tab_id: String,
         workspace_id: String,
+        mission_context: Option<WorkspaceNavigationTarget>,
+        mission: Option<crate::organization::MissionId>,
     },
     Pane {
         pane_id: String,
         workspace_id: String,
+        mission_context: Option<super::pane_missions::PaneMissionMenuContext>,
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,
@@ -559,7 +644,7 @@ pub(super) struct ClientContextMenuOverlay {
 }
 
 pub(super) struct ClientContextMenuItem {
-    pub(super) label: &'static str,
+    pub(super) label: String,
     pub(super) action: ClientContextMenuAction,
 }
 
@@ -574,6 +659,7 @@ pub(super) struct ClientConfirmCloseOverlay {
     pub(super) workspace_id: String,
     pub(super) close_group: bool,
     pub(super) tab_target: Option<ClientTabCloseConfirmation>,
+    pub(super) organization: Option<super::organization_maintenance::OrganizationCapture>,
     pub(super) title: String,
     pub(super) detail: String,
 }
@@ -587,6 +673,7 @@ pub(super) enum ClientShellOverlay {
     ConfirmClose(ClientConfirmCloseOverlay),
     Help(ClientHelpOverlay),
     Navigator(ClientNavigatorOverlay),
+    MissionControl(Box<super::mission_control::MissionControl>),
     WorktreeCreate(ClientWorktreeCreateOverlay),
     WorktreeOpen(ClientWorktreeOpenOverlay),
     WorktreeRemove(ClientWorktreeRemoveOverlay),
@@ -605,6 +692,7 @@ impl ClientShellOverlay {
             Self::ConfirmClose(_) => ClientShellOverlayKind::ConfirmClose,
             Self::Help(_) => ClientShellOverlayKind::Help,
             Self::Navigator(_) => ClientShellOverlayKind::Navigator,
+            Self::MissionControl(_) => ClientShellOverlayKind::MissionControl,
             Self::WorktreeCreate(_) => ClientShellOverlayKind::WorktreeCreate,
             Self::WorktreeOpen(_) => ClientShellOverlayKind::WorktreeOpen,
             Self::WorktreeRemove(_) => ClientShellOverlayKind::WorktreeRemove,
@@ -618,6 +706,7 @@ impl ClientShellOverlay {
 #[derive(Debug)]
 pub(super) enum PendingEndpointKind {
     Generic,
+    MissionControlFocus,
     ProductAnnouncementDismiss {
         version: String,
         id: String,
@@ -627,6 +716,10 @@ pub(super) enum PendingEndpointKind {
     ReloadConfig,
     IntegrationList,
     IntegrationInstall,
+    PrepareMissionWorktreeCreate {
+        source: WorkspaceNavigationTarget,
+        intent: super::worktree_missions::MissionWorktreeIntent,
+    },
     PrepareWorktreeCreate {
         workspace_id: String,
     },
@@ -697,7 +790,9 @@ pub(super) struct ClientEndpointNoticeKey {
     pub(super) code: String,
 }
 
+#[derive(Clone)]
 pub(super) struct ClientVisibleEndpointNotice {
+    pub(super) persistent: bool,
     pub(super) key: ClientEndpointNoticeKey,
     pub(super) title: String,
     pub(super) body: String,
@@ -856,9 +951,11 @@ pub(super) struct ClientCopyModeState {
 }
 
 pub(crate) struct ClientShellState {
+    #[cfg(test)]
+    pub(super) mission_control_projection_work: usize,
     pub(super) machine_diagnostics: super::machine_diagnostics::MachineDiagnostics,
     pub(super) config: ClientShellConfig,
-    pub(super) snapshot: Option<Box<ClientShellSnapshot>>,
+    pub(super) snapshot: Option<Arc<ClientShellSnapshot>>,
     pub(super) active_snapshot_generation: Option<u64>,
     pub(super) pane_surface_generation: Option<u64>,
     pub(super) pane_surface: Option<PaneSurfaceFrame>,
@@ -880,6 +977,9 @@ pub(crate) struct ClientShellState {
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
     pub(super) collapsed_groups: HashSet<String>,
+    pub(super) expanded_hibernate: HashSet<ClientEndpointId>,
+    pub(super) collapsed_collections:
+        HashMap<ClientEndpointId, HashSet<crate::organization::CollectionId>>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
@@ -932,12 +1032,14 @@ pub(crate) struct ClientShellState {
     pub(super) popup_pending_deadline: Option<std::time::Instant>,
     pub(super) next_request_id: u64,
     pub(super) pending_requests: HashMap<String, PendingEndpointRequest>,
+    pub(super) organization_pending: Option<&'static str>,
     pub(super) pending_integration_installs: usize,
     pub(super) pending_notifications: Vec<ClientPendingNotification>,
     pub(super) visible_notification: Option<ClientVisibleNotification>,
     pub(super) queued_notifications: VecDeque<ClientVisibleNotification>,
     pub(super) endpoint_notice_seen: HashSet<ClientEndpointNoticeKey>,
     pub(super) visible_endpoint_notice: Option<ClientVisibleEndpointNotice>,
+    pub(super) organization_notices: HashMap<ClientEndpointId, ClientVisibleEndpointNotice>,
     pub(super) outer_focused: Option<bool>,
     pub(super) ascii_input_source_active: bool,
     pub(super) pending_input_source_changes: Vec<bool>,
@@ -975,7 +1077,7 @@ pub(super) fn release_notes_state(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct WorkspaceEntry {
     pub(super) index: usize,
     pub(super) indented: bool,
@@ -1019,7 +1121,14 @@ impl ClientShellState {
                 .or_default()
                 .extend(saved.collapsed_groups);
         }
+        let mut initial_endpoint = local_endpoint();
+        if let Some((label, session)) = config.initial_endpoint_scope.take() {
+            initial_endpoint.label = label;
+            initial_endpoint.session_name = session;
+        }
         Self {
+            #[cfg(test)]
+            mission_control_projection_work: 0,
             machine_diagnostics: Default::default(),
             config,
             snapshot: None,
@@ -1045,6 +1154,36 @@ impl ClientShellState {
             workspace_press: None,
             tab_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
+            expanded_hibernate: preferences
+                .expanded_hibernate
+                .into_iter()
+                .filter_map(|profile| match profile {
+                    None => Some(ClientEndpointId::Local),
+                    Some(profile) => crate::client::endpoint::ProfileId::parse(profile)
+                        .ok()
+                        .map(ClientEndpointId::Ssh),
+                })
+                .collect(),
+            collapsed_collections: preferences
+                .collection_collapses
+                .into_iter()
+                .filter_map(|saved| {
+                    let endpoint = match saved.profile_id {
+                        Some(profile) => ClientEndpointId::Ssh(
+                            crate::client::endpoint::ProfileId::parse(profile).ok()?,
+                        ),
+                        None => ClientEndpointId::Local,
+                    };
+                    Some((
+                        endpoint,
+                        saved
+                            .collection_ids
+                            .into_iter()
+                            .map(crate::organization::CollectionId)
+                            .collect(),
+                    ))
+                })
+                .collect(),
             remote_collapsed_groups,
             workspace_scroll: 0,
             agent_scroll: 0,
@@ -1060,7 +1199,7 @@ impl ClientShellState {
             last_composed_at: None,
             selection_repaint_deadline: None,
             hits: ShellHitMap::default(),
-            endpoints: vec![local_endpoint()],
+            endpoints: vec![initial_endpoint],
             active_endpoint_id: ClientEndpointId::Local,
             collapsed_endpoints: HashSet::new(),
             mode: ClientShellMode::Terminal,
@@ -1097,12 +1236,14 @@ impl ClientShellState {
             popup_pending_deadline: None,
             next_request_id: 1,
             pending_requests: HashMap::new(),
+            organization_pending: None,
             pending_integration_installs: 0,
             pending_notifications: Vec::new(),
             visible_notification: None,
             queued_notifications: VecDeque::new(),
             endpoint_notice_seen: HashSet::new(),
             visible_endpoint_notice: None,
+            organization_notices: HashMap::new(),
             outer_focused: None,
             ascii_input_source_active: false,
             pending_input_source_changes: Vec::new(),
@@ -1168,6 +1309,7 @@ impl ClientShellState {
         if !groups.remove(&key) {
             groups.insert(key);
         }
+        self.rebuild_organization_rows(endpoint_id);
     }
 
     pub(super) fn navigation_workspace_entries(
@@ -1178,11 +1320,17 @@ impl ClientShellState {
         if self.mobile_layout_active() {
             render::workspace_entries(snapshot, &empty_collapsed_groups)
         } else {
-            render::workspace_entries(
-                snapshot,
-                self.collapsed_groups_for_endpoint(&self.active_endpoint_id)
-                    .unwrap_or(&empty_collapsed_groups),
-            )
+            self.endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+                .and_then(super::organization::collection_workspace_entries)
+                .unwrap_or_else(|| {
+                    render::workspace_entries(
+                        snapshot,
+                        self.collapsed_groups_for_endpoint(&self.active_endpoint_id)
+                            .unwrap_or(&empty_collapsed_groups),
+                    )
+                })
         }
     }
 
@@ -1245,6 +1393,7 @@ impl ClientShellState {
         self.last_composed_at = None;
         self.selection_repaint_deadline = None;
         self.pending_requests.clear();
+        self.organization_pending = None;
         self.pane_scroll_in_flight.clear();
         self.pane_scroll_queued.clear();
         self.pane_scroll_targets.clear();
@@ -1257,10 +1406,14 @@ impl ClientShellState {
         self.endpoint_error_deadline = None;
         self.navigate_workspace_id = None;
         self.pending_workspace_highlight = None;
-        self.overlay = self
-            .config
-            .startup_onboarding
-            .then_some(ClientShellOverlay::Onboarding);
+        // Keep captured overview targets across endpoint replacement so Enter fails
+        // against the old boot/generation instead of reaching a reused public ID.
+        if !matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_))) {
+            self.overlay = self
+                .config
+                .startup_onboarding
+                .then_some(ClientShellOverlay::Onboarding);
+        }
         self.previous_pane_id = None;
         self.pane_mouse_gesture = None;
         self.link_hover = None;
@@ -1285,12 +1438,9 @@ impl ClientShellState {
 
     pub(super) fn apply_active_snapshot(
         &mut self,
-        mut snapshot: Box<ClientShellSnapshot>,
+        snapshot: Arc<ClientShellSnapshot>,
         generation: Option<u64>,
     ) {
-        snapshot
-            .commands
-            .retain(|command| command.action != crate::protocol::ClientShellCommandAction::Unknown);
         let graphics_scope = match &self.active_endpoint_id {
             // Local direct uploads use image IDs authored by the server from its boot ID.
             ClientEndpointId::Local => snapshot.boot_id.clone(),
@@ -1667,7 +1817,11 @@ impl ClientShellState {
             self.navigate_workspace_id = None;
             if !matches!(
                 self.overlay.as_ref(),
-                Some(ClientShellOverlay::Onboarding | ClientShellOverlay::ProductAnnouncement(_))
+                Some(
+                    ClientShellOverlay::Onboarding
+                        | ClientShellOverlay::ProductAnnouncement(_)
+                        | ClientShellOverlay::MissionControl(_)
+                )
             ) {
                 self.overlay = self
                     .config

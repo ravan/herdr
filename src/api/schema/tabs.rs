@@ -46,3 +46,10 @@ pub struct TabInfo {
     pub pane_count: usize,
     pub agent_status: AgentStatus,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TabTransferParams {
+    pub tab_id: String,
+    pub workspace_id: String,
+    pub insert_index: usize,
+}

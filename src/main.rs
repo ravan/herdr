@@ -35,6 +35,7 @@ mod metadata_tokens;
 mod noninteractive_process;
 mod pane;
 use ghostty_vt::pane_graphics_files;
+mod organization;
 mod persist;
 mod platform;
 mod plugin_command;
@@ -719,7 +720,11 @@ fn main() -> io::Result<()> {
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
         platform::begin_cli_output();
-        println!("herdr {}", crate::build_info::version());
+        println!(
+            "{} {}",
+            crate::build_info::executable_name(),
+            crate::build_info::version()
+        );
         return Ok(());
     }
 

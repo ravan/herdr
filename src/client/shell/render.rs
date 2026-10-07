@@ -7,7 +7,7 @@ pub(in crate::client::shell) mod sidebar;
 #[path = "../shell/tabs.rs"]
 mod tabs;
 
-pub(super) use super::agent_sidebar::{ordered_agent_pane_ids, render_agent_panel};
+pub(super) use super::agent_sidebar::render_agent_panel;
 pub(super) use super::aggregate_navigation::navigator_rows as client_navigator_rows;
 pub(super) use overlays::{render_client_overlay, render_context_menu, render_global_menu};
 pub(super) use sidebar::{render_collapsed_sidebar, render_sidebar, workspace_entries};
@@ -230,11 +230,15 @@ pub(super) fn render_mode_bar(
 }
 
 pub(super) struct ShellRenderState<'a> {
+    pub(super) organization_pending: Option<&'static str>,
     pub(super) machine_diagnostics: &'a super::machine_diagnostics::MachineDiagnostics,
     pub(super) endpoints: &'a [ClientShellEndpoint],
     pub(super) active_endpoint_id: &'a ClientEndpointId,
     pub(super) collapsed_endpoints: &'a HashSet<ClientEndpointId>,
     pub(super) collapsed_groups: &'a HashSet<String>,
+    pub(super) expanded_hibernate: &'a HashSet<ClientEndpointId>,
+    pub(super) collapsed_collections:
+        &'a HashMap<ClientEndpointId, HashSet<crate::organization::CollectionId>>,
     pub(super) remote_collapsed_groups: &'a HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: &'a mut usize,
     pub(super) agent_scroll: &'a mut usize,
@@ -288,6 +292,14 @@ pub(super) fn render_shell(
                 );
             }
         } else if state.sidebar_collapsed {
+            let agent_order = super::aggregate_navigation::aggregate_agent_rows(
+                state.endpoints,
+                state.active_endpoint_id,
+                config.agent_panel_sort,
+            )
+            .into_iter()
+            .map(|row| row.agent.pane_id.clone())
+            .collect();
             render_collapsed_sidebar(
                 buffer,
                 layout.sidebar,
@@ -296,6 +308,7 @@ pub(super) fn render_shell(
                 state
                     .selected_workspace_id
                     .map(|target| target.workspace_id.as_str()),
+                agent_order,
                 &mut hits,
             );
         } else {
@@ -314,6 +327,14 @@ pub(super) fn render_shell(
             buffer,
             layout.tab_bar,
             snapshot,
+            state
+                .endpoints
+                .iter()
+                .find(|endpoint| {
+                    &endpoint.endpoint_id == state.active_endpoint_id
+                        && endpoint.organization.is_some()
+                })
+                .map(|endpoint| &endpoint.mission_labels),
             config,
             state.tab_scroll,
             state.reveal_focused_tab,

@@ -419,10 +419,31 @@ fn global_menu_opens_from_sidebar_and_routes_client_actions() {
     assert!(help.actions.is_empty());
     assert!(matches!(state.overlay, Some(ClientShellOverlay::Help(_))));
 
-    state.overlay = Some(ClientShellOverlay::GlobalMenu(ClientGlobalMenuOverlay {
-        highlighted: 3,
-    }));
-    let detach = state.handle_input_bytes(b"\r");
+    state.handle_input_bytes(b"\x1b");
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: launcher.x,
+        row: launcher.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    let menu = state.compose(106, 30).expect("reopened menu");
+    let detach_row = frame_rows(&menu)
+        .iter()
+        .position(|row| row.contains("detach"))
+        .unwrap() as u16;
+    let detach_rect = state
+        .hits
+        .global_menu_rows
+        .iter()
+        .find(|(rect, _)| rect.y == detach_row)
+        .unwrap()
+        .0;
+    let detach = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: detach_rect.x,
+        row: detach_rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
     assert!(detach.detach);
     assert!(state.overlay.is_none());
 }

@@ -939,8 +939,15 @@ async fn native_file_render_scale_profile() {
     const SAMPLES: usize = 35;
     const IMAGE_WIDTH: u32 = 800;
     const IMAGE_HEIGHT: u32 = 480;
+    // The VT backend deliberately supports native source cloning only on Linux.
+    // This is a profile selection policy; all cases still compile on Unix hosts.
+    const PROFILE_NATIVE_SOURCES: bool = cfg!(target_os = "linux");
     for count in [1, 15] {
         for (native, source_retention) in [(false, false), (true, false), (true, true)] {
+            if source_retention && !PROFILE_NATIVE_SOURCES {
+                eprintln!("native_file_render_scale source_retention=true populated_panes={count}: Linux-only backend; profile not applicable on this host");
+                continue;
+            }
             let (mut server, _control, _render, root) =
                 retained_test_server_with_control(b"populated root terminal\r\n");
             if source_retention {

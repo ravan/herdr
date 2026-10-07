@@ -169,6 +169,18 @@ class WindowsConptyPackageTests(unittest.TestCase):
             package.stage_bundle(metadata_path, "x86_64", nupkg, herdr, stage)
             package.validate_stage(metadata_path, "x86_64", stage)
 
+            fork_stage = root / "fork-stage"
+            package.stage_bundle(metadata_path, "x86_64", nupkg, herdr, fork_stage,
+                                 executable_name="herdr-houston.exe")
+            fork_archive = root / "herdr-houston-windows-x86_64.zip"
+            package.archive_bundle(metadata_path, "x86_64", fork_stage, fork_archive,
+                                   executable_name="herdr-houston.exe")
+            with zipfile.ZipFile(fork_archive) as archive:
+                self.assertIn("herdr-houston.exe", archive.namelist())
+                self.assertNotIn("herdr.exe", archive.namelist())
+                self.assertIn("conpty/conpty.dll", archive.namelist())
+                self.assertEqual(archive.read("herdr-houston.exe"), herdr.read_bytes())
+
             (stage / "herdr.exe").write_bytes(
                 self._pe_with_imports(0x8664, ["MSVCP140D.dll"])
             )

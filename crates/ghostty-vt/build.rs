@@ -87,7 +87,9 @@ fn main() {
                 "cargo:rerun-if-changed={}",
                 PathBuf::from(&libc_file).display()
             );
-            command.arg("--libc").arg(libc_file);
+            let mut option = std::ffi::OsString::from("-Dwindows-libc=");
+            option.push(libc_file);
+            command.arg(option);
         }
     }
     if let Ok(system_dir) = env::var("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {

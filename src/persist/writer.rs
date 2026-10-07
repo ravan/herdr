@@ -13,8 +13,12 @@ pub(crate) struct SessionWriter {
 
 impl SessionWriter {
     pub(crate) fn new(protect_unloaded: bool) -> Self {
+        Self::at_path(super::io::session_path(), protect_unloaded)
+    }
+
+    pub(crate) fn at_path(path: PathBuf, protect_unloaded: bool) -> Self {
         Self {
-            path: super::io::session_path(),
+            path,
             protect_unloaded,
         }
     }
@@ -85,15 +89,6 @@ fn preserve_snapshot_history(path: &Path) -> io::Result<()> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
         Err(err) => return Err(err),
     };
-    if let Some((_, latest)) = existing.last() {
-        let modified = std::fs::metadata(latest)?.modified()?;
-        if SystemTime::now()
-            .duration_since(modified)
-            .is_ok_and(|age| age < SNAPSHOT_INTERVAL)
-        {
-            return Ok(());
-        }
-    }
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -102,15 +97,28 @@ fn preserve_snapshot_history(path: &Path) -> io::Result<()> {
     let Ok(snapshot) = serde_json::from_slice::<SessionSnapshot>(&bytes) else {
         return Ok(());
     };
-    if snapshot.version > super::snapshot::SNAPSHOT_VERSION || snapshot.workspaces.is_empty() {
+    if snapshot.version > super::snapshot::SNAPSHOT_VERSION
+        || (snapshot.workspaces.is_empty() && snapshot.organization.is_empty())
+    {
         return Ok(());
     }
     if let Some((_, latest)) = existing.last() {
         let previous_bytes = std::fs::read(latest)?;
         if let Ok(previous) = serde_json::from_slice::<SessionSnapshot>(&previous_bytes) {
-            if super::snapshot::layout_fingerprint(&snapshot).is_some_and(|fingerprint| {
-                super::snapshot::layout_fingerprint(&previous).as_ref() == Some(&fingerprint)
-            }) {
+            if previous.organization == snapshot.organization {
+                let modified = std::fs::metadata(latest)?.modified()?;
+                if SystemTime::now()
+                    .duration_since(modified)
+                    .is_ok_and(|age| age < SNAPSHOT_INTERVAL)
+                {
+                    return Ok(());
+                }
+            }
+            if previous.organization == snapshot.organization
+                && super::snapshot::layout_fingerprint(&snapshot).is_some_and(|fingerprint| {
+                    super::snapshot::layout_fingerprint(&previous).as_ref() == Some(&fingerprint)
+                })
+            {
                 return Ok(());
             }
         }
@@ -313,6 +321,79 @@ mod tests {
 
     fn snapshots(writer: &SessionWriter) -> Vec<(u128, PathBuf)> {
         recovery_files(&writer.path.with_file_name("session-snapshots")).unwrap()
+    }
+
+    #[test]
+    fn mc_s2_flag_only_edits_are_recoverable_across_writer_restart() {
+        let mut writer = writer(false);
+        let mut state = crate::app::AppState::test_new();
+        let id = state.create_collection("Side quests".into()).unwrap().id;
+        let mut snapshot: SessionSnapshot =
+            serde_json::from_str(r#"{"version":3,"workspaces":[],"active":null,"selected":0}"#)
+                .unwrap();
+        for parked in [false, true, false] {
+            state
+                .set_collection_hibernating(id.clone(), parked)
+                .unwrap();
+            snapshot.organization = state.organization.clone();
+            writer = SessionWriter::at_path(writer.path.clone(), false);
+            writer.save(&snapshot, None);
+        }
+        let flags = snapshots(&writer)
+            .into_iter()
+            .map(|(_, path)| {
+                let snapshot: SessionSnapshot =
+                    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+                snapshot.organization.collections[0].hibernating
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(flags, vec![false, true, false]);
+        std::fs::remove_dir_all(writer.path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn mc_s1_recovery_keeps_organization_only_edits_across_writer_restarts() {
+        let mut writer = writer(false);
+        let mut state = crate::app::AppState::test_new();
+        let first = state.create_collection("Agent workshop".into()).unwrap();
+        let mut snapshot: SessionSnapshot =
+            serde_json::from_str(r#"{"version":3,"workspaces":[],"active":null,"selected":0}"#)
+                .unwrap();
+        snapshot.organization = state.organization.clone();
+        writer.save(&snapshot, None);
+        let recover = |writer: &SessionWriter| {
+            snapshots(writer)
+                .into_iter()
+                .map(|(_, path)| {
+                    serde_json::from_slice::<SessionSnapshot>(&std::fs::read(path).unwrap())
+                        .unwrap()
+                        .organization
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(recover(&writer), vec![state.organization.clone()]);
+        let second = state.create_collection("Other work".into()).unwrap();
+        snapshot.organization = state.organization.clone();
+        writer = SessionWriter::at_path(writer.path.clone(), false);
+        writer.save(&snapshot, None);
+        let third = state.create_collection("Later".into()).unwrap();
+        snapshot.organization = state.organization.clone();
+        writer.save(&snapshot, None);
+        let recovered = recover(&writer);
+        assert_eq!(recovered.len(), 3);
+        assert_eq!(recovered[0].collections, vec![first.clone()]);
+        assert_eq!(
+            recovered[1].collections,
+            vec![first.clone(), second.clone()]
+        );
+        assert_eq!(recovered[2].collections, vec![first, second, third]);
+        writer.save(&snapshot, None);
+        assert_eq!(
+            recover(&writer),
+            recovered,
+            "unchanged saves do not rotate recovery copies"
+        );
+        std::fs::remove_dir_all(writer.path.parent().unwrap()).unwrap();
     }
 
     #[test]

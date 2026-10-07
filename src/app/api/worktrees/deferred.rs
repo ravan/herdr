@@ -25,7 +25,16 @@ impl App {
                 true
             }
             crate::api::schema::Method::WorktreeCreate(params) => {
-                self.start_api_worktree_create(request.id, params, respond_to);
+                self.start_api_worktree_create(request.id, params, None, respond_to);
+                true
+            }
+            crate::api::schema::Method::WorktreeCreateInMission(params) => {
+                self.start_api_worktree_create(
+                    request.id,
+                    params.create,
+                    Some(params.mission_id),
+                    respond_to,
+                );
                 true
             }
             crate::api::schema::Method::WorktreeRemove(params) => {
@@ -36,7 +45,7 @@ impl App {
         }
     }
 
-    fn send_api_response(respond_to: std::sync::mpsc::Sender<String>, response: String) {
+    pub(super) fn send_api_response(respond_to: std::sync::mpsc::Sender<String>, response: String) {
         let _ = respond_to.send(response);
     }
 
@@ -46,7 +55,10 @@ impl App {
         id
     }
 
-    fn api_create_source_workspace_idx(&self, api: &ApiWorktreeAddRequest) -> Option<usize> {
+    pub(super) fn api_create_source_workspace_idx(
+        &self,
+        api: &ApiWorktreeAddRequest,
+    ) -> Option<usize> {
         let Some(source_workspace_id) = api.source_workspace_id.as_ref() else {
             return self.find_parent_workspace_by_key(&api.repo_key);
         };
@@ -101,8 +113,23 @@ impl App {
         &mut self,
         id: String,
         params: WorktreeCreateParams,
+        mission_id: Option<crate::organization::MissionId>,
         respond_to: std::sync::mpsc::Sender<String>,
     ) {
+        if mission_id.as_ref().is_some_and(|id| {
+            !self
+                .state
+                .organization
+                .missions
+                .iter()
+                .any(|mission| &mission.id == id)
+        }) {
+            Self::send_api_response(
+                respond_to,
+                encode_error(id, "mission_not_found", "selected mission no longer exists"),
+            );
+            return;
+        }
         let branch = params
             .branch
             .unwrap_or_else(|| {
@@ -178,6 +205,7 @@ impl App {
         });
         let api_request = ApiWorktreeAddRequest {
             id,
+            mission_id,
             operation_id,
             checkout_key,
             source_workspace_id,
@@ -402,6 +430,10 @@ impl App {
             return;
         }
 
+        if api.mission_id.is_some() {
+            self.finish_mission_worktree_create(api, result.path);
+            return;
+        }
         let source_workspace_idx = self.api_create_source_workspace_idx(&api);
         let mut source = WorktreeSource {
             workspace_idx: source_workspace_idx,
@@ -410,9 +442,16 @@ impl App {
             repo_key: api.repo_key,
             repo_name: api.repo_name,
         };
-        if let Err(err) = self.ensure_source_parent_membership(&mut source, true) {
-            Self::send_api_response(api.respond_to, encode_error(api.id, err.code, err.message));
-            return;
+        // Existing standalone membership is committed only after target allocation succeeds.
+        let delayed_source_membership = source.workspace_idx.is_some();
+        if !delayed_source_membership {
+            if let Err(err) = self.ensure_source_parent_membership(&mut source, true) {
+                Self::send_api_response(
+                    api.respond_to,
+                    encode_error(api.id, err.code, err.message),
+                );
+                return;
+            }
         }
 
         let (ws_idx, created_workspace) =
@@ -437,6 +476,16 @@ impl App {
                     }
                 }
             };
+
+        if delayed_source_membership {
+            if let Err(err) = self.ensure_source_parent_membership(&mut source, true) {
+                Self::send_api_response(
+                    api.respond_to,
+                    encode_error(api.id, err.code, err.message),
+                );
+                return;
+            }
+        }
 
         self.mark_worktree_membership(
             &source,

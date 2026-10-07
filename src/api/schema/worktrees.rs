@@ -30,6 +30,14 @@ pub struct WorktreeCreateParams {
     pub trust_repository: bool,
 }
 
+/// Contextual creation has its own advertised method; ordinary create stays frozen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorktreeCreateInMissionParams {
+    pub mission_id: crate::organization::MissionId,
+    #[serde(flatten)]
+    pub create: WorktreeCreateParams,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub struct WorktreeOpenParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]

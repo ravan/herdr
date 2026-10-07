@@ -8,6 +8,12 @@ static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(1);
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub(super) struct ClientCollectionCollapse {
+    pub(super) profile_id: Option<String>,
+    pub(super) collection_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct ClientRemoteCollapsedGroups {
     pub(super) profile_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -16,6 +22,11 @@ pub(super) struct ClientRemoteCollapsedGroups {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(super) struct ClientChromePreferences {
+    /// Endpoint profiles where this client explicitly expanded Hibernate; absent means collapsed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) expanded_hibernate: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) collection_collapses: Vec<ClientCollectionCollapse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) sidebar_width: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,14 +42,25 @@ pub(super) struct ClientChromePreferences {
 }
 
 pub(super) fn path_for_local_endpoint(socket_path: &Path) -> PathBuf {
+    path_for_identity("local", socket_path.to_string_lossy().bytes())
+}
+
+pub(super) fn path_for_direct_remote_endpoint(target: &str, session: &str) -> PathBuf {
+    path_for_identity(
+        "ssh-direct",
+        target.bytes().chain([0]).chain(session.bytes()),
+    )
+}
+
+fn path_for_identity(namespace: &str, identity: impl IntoIterator<Item = u8>) -> PathBuf {
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in socket_path.to_string_lossy().as_bytes() {
-        hash ^= u64::from(*byte);
+    for byte in identity {
+        hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     crate::config::state_dir()
         .join("client-shell")
-        .join(format!("local-{hash:016x}.json"))
+        .join(format!("{namespace}-{hash:016x}.json"))
 }
 
 pub(super) fn load(path: &Path) -> Option<ClientChromePreferences> {

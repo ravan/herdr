@@ -5,6 +5,7 @@ pub mod commands;
 pub mod common;
 pub mod events;
 pub mod integrations;
+pub mod organization;
 pub mod panes;
 pub mod plugins;
 pub mod response;
@@ -19,6 +20,7 @@ pub use commands::*;
 pub use common::*;
 pub use events::*;
 pub use integrations::*;
+pub use organization::*;
 pub use panes::*;
 pub use plugins::*;
 pub use response::*;
@@ -75,6 +77,40 @@ pub enum Method {
     ClientShellSurfaceSet(ClientShellSurfaceSetParams),
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(EmptyParams),
+    #[serde(rename = "mission.rename")]
+    MissionRename(MissionRenameParams),
+    #[serde(rename = "collection.move")]
+    CollectionMove(CollectionMoveParams),
+    #[serde(rename = "mission.move")]
+    MissionMove(MissionMoveParams),
+    #[serde(rename = "mission.set_objective")]
+    MissionSetObjective(MissionSetObjectiveParams),
+    #[serde(rename = "collection.delete")]
+    CollectionDelete(CollectionDeleteParams),
+    #[serde(rename = "collection.unassign_family")]
+    CollectionUnassignFamily(CollectionUnassignFamilyParams),
+    #[serde(rename = "mission.unassign")]
+    MissionUnassign(MissionUnassignParams),
+    #[serde(rename = "mission.delete")]
+    MissionDelete(MissionDeleteParams),
+    #[serde(rename = "organization.get")]
+    OrganizationGet(EmptyParams),
+    #[serde(rename = "mission.create")]
+    MissionCreate(MissionCreateParams),
+    #[serde(rename = "mission.assign")]
+    MissionAssign(MissionAssignParams),
+    #[serde(rename = "mission.assign_pane")]
+    MissionAssignPane(MissionAssignPaneParams),
+    #[serde(rename = "mission.clear_pane_override")]
+    MissionClearPaneOverride(MissionClearPaneOverrideParams),
+    #[serde(rename = "collection.rename")]
+    CollectionRename(CollectionRenameParams),
+    #[serde(rename = "collection.create")]
+    CollectionCreate(CollectionCreateParams),
+    #[serde(rename = "collection.assign_family")]
+    CollectionAssignFamily(CollectionAssignFamilyParams),
+    #[serde(rename = "collection.set_hibernating")]
+    CollectionSetHibernating(CollectionSetHibernatingParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
     #[serde(rename = "workspace.list")]
@@ -97,6 +133,8 @@ pub enum Method {
     WorktreeList(WorktreeListParams),
     #[serde(rename = "worktree.create")]
     WorktreeCreate(WorktreeCreateParams),
+    #[serde(rename = "worktree.create_in_mission")]
+    WorktreeCreateInMission(WorktreeCreateInMissionParams),
     #[serde(rename = "worktree.open")]
     WorktreeOpen(WorktreeOpenParams),
     #[serde(rename = "worktree.remove")]
@@ -113,6 +151,8 @@ pub enum Method {
     TabRename(TabRenameParams),
     #[serde(rename = "tab.move")]
     TabMove(TabMoveParams),
+    #[serde(rename = "tab.transfer")]
+    TabTransfer(TabTransferParams),
     #[serde(rename = "tab.close")]
     TabClose(TabTarget),
     #[serde(rename = "agent.list")]

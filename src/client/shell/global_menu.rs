@@ -4,6 +4,8 @@ use super::*;
 pub(super) enum ClientGlobalMenuAction {
     Binding(crate::input::KeybindAction),
     WhatsNew,
+    NewCollection,
+    Missions,
 }
 
 pub(super) fn global_menu_attention(snapshot: &ClientShellSnapshot) -> bool {
@@ -46,9 +48,15 @@ pub(super) fn global_menu_items(
             ClientGlobalMenuAction::WhatsNew,
         ));
     }
+    items.push(("Missions…", ClientGlobalMenuAction::Missions));
+    items.push(("new collection", ClientGlobalMenuAction::NewCollection));
     items.push((
         "detach",
         ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Detach),
+    ));
+    items.push((
+        "Mission control",
+        ClientGlobalMenuAction::Binding(crate::input::KeybindAction::OpenMissionControl),
     ));
     items
 }
@@ -104,6 +112,8 @@ impl ClientShellState {
                 self.record_binding(crate::input::KeybindMatch::Action(binding), outcome)
             }
             ClientGlobalMenuAction::WhatsNew => self.open_release_notes(),
+            ClientGlobalMenuAction::Missions => self.open_missions(outcome),
+            ClientGlobalMenuAction::NewCollection => self.open_new_collection(outcome),
         }
         outcome.repaint = true;
     }

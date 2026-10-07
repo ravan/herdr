@@ -1718,6 +1718,105 @@
           ],
           "type": "object"
         },
+        "CollectionAssignFamilyParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "$ref": "#/schemas/request/$defs/FamilyId"
+            }
+          },
+          "required": [
+            "family_id",
+            "collection_id"
+          ],
+          "type": "object"
+        },
+        "CollectionCreateParams": {
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "CollectionDeleteParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "collection_id"
+          ],
+          "type": "object"
+        },
+        "CollectionMoveParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "to_index": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "collection_id",
+            "to_index"
+          ],
+          "type": "object"
+        },
+        "CollectionRenameParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "collection_id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "CollectionSetHibernatingParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "hibernating": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "collection_id",
+            "hibernating"
+          ],
+          "type": "object"
+        },
+        "CollectionUnassignFamilyParams": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "$ref": "#/schemas/request/$defs/FamilyId"
+            }
+          },
+          "required": [
+            "family_id",
+            "collection_id"
+          ],
+          "type": "object"
+        },
         "CommandInvokeParams": {
           "properties": {
             "command_id": {
@@ -2151,6 +2250,42 @@
           ],
           "type": "object"
         },
+        "FamilyId": {
+          "oneOf": [
+            {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "managed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "key"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "standalone",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "workspace_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "IntegrationInstallParams": {
           "properties": {
             "target": {
@@ -2351,6 +2486,160 @@
           "required": [
             "path",
             "ratio"
+          ],
+          "type": "object"
+        },
+        "MissionAssignPaneParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionAssignParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/schemas/request/$defs/MissionTarget"
+            }
+          },
+          "required": [
+            "target",
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionClearPaneOverrideParams": {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
+        "MissionCreateParams": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "objective": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "MissionDeleteParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionMoveParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "to_index": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "mission_id",
+            "to_index"
+          ],
+          "type": "object"
+        },
+        "MissionRenameParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mission_id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "MissionSetObjectiveParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "objective": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "mission_id",
+            "objective"
+          ],
+          "type": "object"
+        },
+        "MissionTarget": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "tab",
+                  "type": "string"
+                },
+                "tab_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "tab_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "MissionUnassignParams": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/schemas/request/$defs/MissionTarget"
+            }
+          },
+          "required": [
+            "target",
+            "mission_id"
           ],
           "type": "object"
         },
@@ -4357,6 +4646,27 @@
           ],
           "type": "object"
         },
+        "TabTransferParams": {
+          "properties": {
+            "insert_index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tab_id",
+            "workspace_id",
+            "insert_index"
+          ],
+          "type": "object"
+        },
         "ToastHerdrPosition": {
           "enum": [
             "top-left",
@@ -4547,6 +4857,61 @@
             "repo_root",
             "checkout_path",
             "is_linked_worktree"
+          ],
+          "type": "object"
+        },
+        "WorktreeCreateInMissionParams": {
+          "description": "Contextual creation has its own advertised method; ordinary create stays frozen.",
+          "properties": {
+            "base": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "focus": {
+              "default": false,
+              "type": "boolean"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mission_id": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trust_repository": {
+              "type": "boolean"
+            },
+            "workspace_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "mission_id"
           ],
           "type": "object"
         },
@@ -4924,6 +5289,278 @@
         {
           "properties": {
             "method": {
+              "const": "mission.rename",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionRenameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.move",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.move",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.set_objective",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionSetObjectiveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionDeleteParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.unassign_family",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionUnassignFamilyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.unassign",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionUnassignParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionDeleteParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "organization.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.assign",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionAssignParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.assign_pane",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionAssignPaneParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mission.clear_pane_override",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MissionClearPaneOverrideParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.rename",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionRenameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.assign_family",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionAssignFamilyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "collection.set_hibernating",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CollectionSetHibernatingParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "workspace.create",
               "type": "string"
             },
@@ -5100,6 +5737,22 @@
         {
           "properties": {
             "method": {
+              "const": "worktree.create_in_mission",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorktreeCreateInMissionParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "worktree.open",
               "type": "string"
             },
@@ -5217,6 +5870,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/TabMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "tab.transfer",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/TabTransferParams"
             }
           },
           "required": [
@@ -6784,6 +7453,34 @@
           ],
           "type": "string"
         },
+        "Collection": {
+          "properties": {
+            "hibernating": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/schemas/success_response/$defs/CollectionName"
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "order",
+            "hibernating"
+          ],
+          "type": "object"
+        },
+        "CollectionName": {
+          "type": "string"
+        },
         "ConfigReloadStatus": {
           "enum": [
             "applied",
@@ -7485,6 +8182,57 @@
           ],
           "type": "string"
         },
+        "FamilyAssignment": {
+          "properties": {
+            "collection_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "$ref": "#/schemas/success_response/$defs/FamilyId"
+            }
+          },
+          "required": [
+            "family_id",
+            "collection_id"
+          ],
+          "type": "object"
+        },
+        "FamilyId": {
+          "oneOf": [
+            {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "managed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "key"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "standalone",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "workspace_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "InstalledPluginInfo": {
           "properties": {
             "actions": {
@@ -7774,6 +8522,71 @@
             }
           ]
         },
+        "Mission": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/schemas/success_response/$defs/MissionName"
+            },
+            "objective": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "order"
+          ],
+          "type": "object"
+        },
+        "MissionAssignment": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/schemas/success_response/$defs/MissionTarget"
+            }
+          },
+          "required": [
+            "target",
+            "mission_id"
+          ],
+          "type": "object"
+        },
+        "MissionName": {
+          "type": "string"
+        },
+        "MissionTarget": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "tab",
+                  "type": "string"
+                },
+                "tab_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "tab_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "NotificationShowReason": {
           "enum": [
             "shown",
@@ -7783,6 +8596,54 @@
             "busy"
           ],
           "type": "string"
+        },
+        "OrganizationState": {
+          "properties": {
+            "collections": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/Collection"
+              },
+              "type": "array"
+            },
+            "family_assignments": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/FamilyAssignment"
+              },
+              "type": "array"
+            },
+            "mission_assignments": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/MissionAssignment"
+              },
+              "type": "array"
+            },
+            "missions": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/Mission"
+              },
+              "type": "array"
+            },
+            "pane_mission_assignments": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PaneMissionAssignment"
+              },
+              "type": "array"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "revision",
+            "collections"
+          ],
+          "type": "object"
         },
         "PaneDirection": {
           "enum": [
@@ -8137,6 +8998,21 @@
             "row",
             "start_col",
             "end_col"
+          ],
+          "type": "object"
+        },
+        "PaneMissionAssignment": {
+          "properties": {
+            "mission_id": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "mission_id"
           ],
           "type": "object"
         },
@@ -9167,6 +10043,62 @@
         },
         "ResponseResult": {
           "oneOf": [
+            {
+              "properties": {
+                "organization": {
+                  "$ref": "#/schemas/success_response/$defs/OrganizationState"
+                },
+                "type": {
+                  "const": "organization",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "organization"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "mission": {
+                  "$ref": "#/schemas/success_response/$defs/Mission"
+                },
+                "organization": {
+                  "$ref": "#/schemas/success_response/$defs/OrganizationState"
+                },
+                "type": {
+                  "const": "mission_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "mission",
+                "organization"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "collection": {
+                  "$ref": "#/schemas/success_response/$defs/Collection"
+                },
+                "organization": {
+                  "$ref": "#/schemas/success_response/$defs/OrganizationState"
+                },
+                "type": {
+                  "const": "collection_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "collection",
+                "organization"
+              ],
+              "type": "object"
+            },
             {
               "properties": {
                 "capabilities": {

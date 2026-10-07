@@ -173,6 +173,10 @@ impl ClientShellState {
                 RawInputEvent::Key(key) => self.handle_key(key, &mut outcome),
                 RawInputEvent::Text(text) => {
                     let text = text.into_string();
+                    if self.insert_mission_control_text(&text) {
+                        outcome.repaint = true;
+                        continue;
+                    }
                     if matches!(
                         self.overlay,
                         Some(
@@ -206,6 +210,10 @@ impl ClientShellState {
                     }
                 }
                 RawInputEvent::Paste(text) => {
+                    if self.insert_mission_control_text(&text) {
+                        outcome.repaint = true;
+                        continue;
+                    }
                     if matches!(
                         self.overlay,
                         Some(
@@ -307,7 +315,9 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         outcome.repaint |= self.clear_link_hover();
-        if self.copy_operation_in_flight {
+        if self.copy_operation_in_flight
+            && !matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_)))
+        {
             self.copy_input_queue.push_back(key);
             return;
         }
@@ -407,7 +417,9 @@ impl ClientShellState {
             crate::input::RepeatPlan::Forwarded(target) => {
                 let pane_blocked_by_popup = matches!(&target, ClientInputTarget::Pane(_))
                     && (self.popup_pending || self.popup_terminal_id.is_some());
-                if !pane_blocked_by_popup {
+                if !pane_blocked_by_popup
+                    && !matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_)))
+                {
                     self.push_pane_key(target, key, outcome);
                 }
             }
@@ -440,6 +452,9 @@ impl ClientShellState {
     }
 
     pub(super) fn modal_paste_target_active(&self) -> bool {
+        if matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_))) {
+            return true;
+        }
         if self.popup_pending
             || self.popup_input_target().is_some()
             || (self.overlay.is_none()
@@ -494,7 +509,9 @@ impl ClientShellState {
             return false;
         }
         if let Some(text) = read_clipboard_text() {
-            let inserted = self.insert_copy_search_text(&text) || self.insert_overlay_text(&text);
+            let inserted = self.insert_mission_control_text(&text)
+                || self.insert_copy_search_text(&text)
+                || self.insert_overlay_text(&text);
             outcome.repaint |= inserted;
         }
         true
@@ -520,6 +537,10 @@ impl ClientShellState {
             if key.kind == KeyEventKind::Press {
                 self.route_overlay_key(key, outcome);
             }
+            return None;
+        }
+        if matches!(self.overlay, Some(ClientShellOverlay::MissionControl(_))) {
+            self.route_overlay_key(key, outcome);
             return None;
         }
         if let Some(target) = self.popup_input_target() {
@@ -978,7 +999,8 @@ impl ClientShellState {
         if matches!(
             self.overlay,
             Some(
-                ClientShellOverlay::Onboarding
+                ClientShellOverlay::MissionControl(_)
+                    | ClientShellOverlay::Onboarding
                     | ClientShellOverlay::ProductAnnouncement(_)
                     | ClientShellOverlay::ReleaseNotes(_)
             )

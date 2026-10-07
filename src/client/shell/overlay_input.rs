@@ -445,6 +445,9 @@ impl ClientShellState {
     }
 
     pub(super) fn insert_overlay_text(&mut self, text: &str) -> bool {
+        if self.insert_mission_control_text(text) {
+            return true;
+        }
         if self.insert_worktree_overlay_text(text) {
             return true;
         }
@@ -476,6 +479,9 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         use crossterm::event::KeyModifiers;
+        if self.route_mission_control_key(key, outcome) {
+            return;
+        }
 
         if matches!(self.overlay, Some(ClientShellOverlay::Onboarding)) {
             if matches!(
@@ -602,7 +608,7 @@ impl ClientShellState {
         if matches!(self.overlay, Some(ClientShellOverlay::ContextMenu(_))) {
             match key.code {
                 KeyCode::Esc => {
-                    self.overlay = None;
+                    self.cancel_worktree_mission_picker();
                     outcome.repaint = true;
                 }
                 KeyCode::Up => {
@@ -879,10 +885,13 @@ impl ClientShellState {
             if key.code == KeyCode::Enter {
                 self.accept_close_confirmation(outcome);
             } else if key.code == KeyCode::Esc {
+                let metadata = matches!(self.overlay.as_ref(),Some(ClientShellOverlay::ConfirmClose(c)) if c.organization.is_some());
                 self.overlay = None;
-                self.mode = ClientShellMode::Navigate;
-                self.navigate_workspace_id = self.focused_navigation_target();
-                self.reveal_navigation_workspace = true;
+                if !metadata {
+                    self.mode = ClientShellMode::Navigate;
+                    self.navigate_workspace_id = self.focused_navigation_target();
+                    self.reveal_navigation_workspace = true;
+                }
                 outcome.repaint = true;
             }
             return;
@@ -929,6 +938,113 @@ impl ClientShellState {
         };
         let trimmed = rename.input.trim();
         let method = match rename.target {
+            ClientRenameTarget::Collection(capture) => {
+                if !self.organization_capture_valid(&capture) {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
+                let super::organization_maintenance::OrganizationSubject::Collection(collection_id) =
+                    capture.subject
+                else {
+                    return;
+                };
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::CollectionRename(
+                        crate::api::schema::CollectionRenameParams {
+                            collection_id,
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
+            ClientRenameTarget::MissionObjective(capture) => {
+                if !self.organization_capture_valid(&capture) {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
+                let super::organization_maintenance::OrganizationSubject::Mission(mission_id) =
+                    capture.subject
+                else {
+                    return;
+                };
+                Some(crate::api::schema::Method::MissionSetObjective(
+                    crate::api::schema::MissionSetObjectiveParams {
+                        mission_id,
+                        objective: (!trimmed.is_empty()).then(|| rename.input.to_string()),
+                    },
+                ))
+            }
+            ClientRenameTarget::Mission(capture) => {
+                if !self.organization_capture_valid(&capture) {
+                    self.maintenance_stale(outcome);
+                    return;
+                }
+                let super::organization_maintenance::OrganizationSubject::Mission(mission_id) =
+                    capture.subject
+                else {
+                    return;
+                };
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::MissionRename(
+                        crate::api::schema::MissionRenameParams {
+                            mission_id,
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
+            ClientRenameTarget::NewMission {
+                endpoint_id,
+                boot_id,
+                generation,
+            } => {
+                let valid = endpoint_id == self.active_endpoint_id
+                    && self
+                        .endpoints
+                        .iter()
+                        .find(|e| e.endpoint_id == endpoint_id)
+                        .is_some_and(|e| {
+                            e.snapshot_generation == generation
+                                && e.snapshot
+                                    .as_ref()
+                                    .is_some_and(|snapshot| snapshot.boot_id == boot_id)
+                        });
+                if !valid {
+                    outcome.repaint |= self.push_endpoint_notice(ClientEndpointNoticeKind::Rejected,"mission.stale_form","Action unavailable","The mission form belongs to an earlier server connection. Open it again to create a mission.");
+                    return;
+                }
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::MissionCreate(
+                        crate::api::schema::MissionCreateParams {
+                            name: trimmed.to_owned(),
+                            objective: None,
+                        },
+                    )
+                })
+            }
+            ClientRenameTarget::NewCollection {
+                endpoint_id,
+                boot_id,
+                generation,
+            } => {
+                if endpoint_id != self.active_endpoint_id
+                    || !self.endpoints.iter().any(|e| {
+                        e.endpoint_id == endpoint_id
+                            && e.snapshot_generation == generation
+                            && e.snapshot.as_ref().is_some_and(|s| s.boot_id == boot_id)
+                    })
+                {
+                    outcome.repaint |= self.push_endpoint_notice(ClientEndpointNoticeKind::Rejected,"collection.stale_form","Action unavailable","The collection form belongs to an earlier server connection. Open it again to create a collection.");
+                    return;
+                }
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::CollectionCreate(
+                        crate::api::schema::CollectionCreateParams {
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
             ClientRenameTarget::NewWorkspace {
                 source_workspace_id,
                 cwd,
@@ -1041,6 +1157,10 @@ impl ClientShellState {
             return;
         };
         outcome.repaint = true;
+        if let Some(capture) = confirm.organization {
+            self.submit_organization_delete(capture, outcome);
+            return;
+        }
         let method = if let Some(target) = confirm.tab_target {
             if target.workspace.endpoint_id != self.active_endpoint_id
                 || !self.navigation_target_valid(&target.workspace)
@@ -1150,6 +1270,7 @@ impl ClientShellState {
                 workspace_id,
                 close_group: closes_group,
                 tab_target,
+                organization: None,
                 title: if closes_group {
                     "Close worktree group?".to_owned()
                 } else {

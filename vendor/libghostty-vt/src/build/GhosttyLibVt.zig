@@ -252,6 +252,12 @@ fn initLib(
     }
 
     if (target.result.os.tag == .windows) {
+        // A global --libc also reaches native build helpers. Keep the SDK
+        // configuration on the Windows library compilation only.
+        if (zig.windows_libc) |libc_file| {
+            lib.setLibCFile(.{ .cwd_relative = libc_file });
+        }
+
         // Zig's ubsan emits /exclude-symbols linker directives that
         // are incompatible with the MSVC linker (LNK4229).
         lib.bundle_ubsan_rt = false;

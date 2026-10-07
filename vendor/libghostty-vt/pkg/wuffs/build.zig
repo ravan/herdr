@@ -36,6 +36,7 @@ const wuffs_c_source = wuffs_c_source: {
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const windows_libc = b.option([]const u8, "windows-libc", "Windows target libc configuration");
 
     const module = b.addModule("wuffs", .{
         .root_source_file = b.path("src/main.zig"),
@@ -59,7 +60,7 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
             .link_libc = windows,
-            .libc_file = if (b.libc_file) |path| .{ .cwd_relative = path } else null,
+            .libc_file = if (windows_libc orelse b.libc_file) |path| .{ .cwd_relative = path } else null,
         });
 
         // Wuffs only needs stdlib.h and string.h from libc, and only for

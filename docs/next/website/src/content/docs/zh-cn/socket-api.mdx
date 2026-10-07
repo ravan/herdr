@@ -272,6 +272,12 @@ Worktree 方法把 Git 检出作为 Herdr 工作区管理。`worktree.create` �
 {"id":"req_1","method":"worktree.create","params":{"workspace_id":"w1","branch":"worktree/api","focus":false}}
 ```
 
+`worktree.create_in_mission` 单独公布支持情况。它接受必填的 `mission_id` 和原有创建参数，在初始标签页完成任务分配并继承家族集合后，返回相同的 `worktree_created` 结果。`worktree.create` 保持原有语义。不存在的任务在 Git 运行前被拒绝。如果任务在 Git 运行期间被删除，或之后终端创建失败，错误会显示已成功创建的检出目录路径，并保留该目录以供恢复。取消客户端表单不会发送创建请求；已提交的创建遵循现有异步策略。
+
+```json
+{"id":"req_mission","method":"worktree.create_in_mission","params":{"workspace_id":"w1","mission_id":"mission_1","branch":"worktree/objective","focus":false}}
+```
+
 打开已有检出:
 
 ```json
@@ -760,4 +766,49 @@ herdr agent wait w1:p1 --until blocked
 
 由客户端渲染的 Herdr UI 对本地和 SSH 服务器使用稳定的端点代数。客户端和服务器构建不必一致。连接时，双方会协商核心快照、屏幕、输入和 blob 编解码器，服务器则公布支持的 API 方法和可选能力。已保存的 SSH 机器需要 `surface_interest` 来确保只有选中的机器传输窗格画面，并需要 `health_check` 来发现空闲连接的故障。缺少这些能力的服务器会显示 Attention，直到明确更新。详见[连接机器](/zh-cn/docs/connecting-machines/)。缺少方法时,只禁用该服务器上的对应操作并显示客户端本地通知;操作被拒绝或超时也不会断开连接。只有早于端点第 1 代的服务器需要最后更新一次。
 
+组织目录属于单个端点会话。客户端只接受与当前连接代次和服务器启动 ID 匹配的完整目录。组织修改需要该目录和分别公布的对应方法。重新连接会刷新已确认数据，失败只产生客户端本地通知，其他兼容端点的终端访问继续可用。不支持创建或分配方法不会禁用分别支持的目录读取或维护操作。
+
 带编号的二进制协议仍用于同一安装内的内部操作,包括直接终端连接和实时交接。跨不同构建使用这些操作前,请检查 `ping` 或 `herdr status`。JSON API 客户端应忽略未知字段,并把不支持的方法当作普通错误处理。
+
+## 组织元数据维护
+
+各维护方法分别公布能力，使用现有 `organization` 结果返回已确认的目录和修订号。现有方法形状和端点编解码器不变。通过 `organization.get`、`workspace.list`、`tab.list` 和 `pane.list` 获取 ID。
+
+名称去除首尾空白后必须含有文本。`to_index` 是完整集合或任务目录中从零开始的绝对位置，包含已休眠的集合。移动保留其他定义的相对顺序，删除后序号连续。相同值的编辑或移除已未分配的有效目标不会改变修订号。未知 ID、越界位置、变化的成员关系或修订容量耗尽会返回错误，状态保持不变。
+
+`mission.set_objective` 必须包含 `objective` 键：字符串修改目标，明确的 `null` 清除目标，省略键会被拒绝。空字符串或仅包含空白的字符串也会清除目标。取消分配必须提供预期的当前集合或任务 ID，防止过期命令移除较新的分配（`assignment_changed`）。家族取消分配要求精确的现存家族。删除定义也会清除该定义拥有的保留家族引用或明确设置的标签页和窗格分配。终端、运行进程、检出目录和焦点保持不变。
+
+| Method | Required parameters |
+| --- | --- |
+| `collection.rename` | `collection_id`, `name` |
+| `collection.move` | `collection_id`, `to_index` |
+| `collection.delete` | `collection_id` |
+| `collection.unassign_family` | `family_id`, `collection_id` |
+| `mission.rename` | `mission_id`, `name` |
+| `mission.move` | `mission_id`, `to_index` |
+| `mission.set_objective` | `mission_id`, `objective` (nullable) |
+| `mission.delete` | `mission_id` |
+| `mission.unassign` | `target` (tab), `mission_id` |
+
+```json
+{"id":"move","method":"mission.move","params":{"mission_id":"mission_1","to_index":0}}
+{"id":"clear_objective","method":"mission.set_objective","params":{"mission_id":"mission_1","objective":null}}
+{"id":"remove_member","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"uncollect","method":"collection.unassign_family","params":{"family_id":{"kind":"managed","key":"repository-family-key"},"collection_id":"collection_1"}}
+```
+
+### 组织管理流程示例
+
+分配成员前先读取 `organization.get` 及当前工作区、标签页、窗格列表。以下请求示例属于一个会话；将所有 ID 替换为该端点已确认的 ID。每项操作需要服务器独立公布对应方法。
+
+```json
+{"id":"assign_tab","method":"mission.assign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+{"id":"park","method":"collection.set_hibernating","params":{"collection_id":"collection_1","hibernating":true}}
+{"id":"jump","method":"pane.focus","params":{"pane_id":"w1:p2"}}
+{"id":"move","method":"pane.move","params":{"pane_id":"w1:p2","destination":{"type":"tab","tab_id":"w2:t1","split":"right"},"focus":true}}
+{"id":"remove_tab","method":"mission.unassign","params":{"target":{"kind":"tab","tab_id":"w1:t1"},"mission_id":"mission_1"}}
+```
+
+后续请求使用移动结果返回的当前窗格 ID。标签页任务适用于没有显式覆盖的窗格。`mission.clear_pane_override` 恢复继承，不会将窗格排除在所属标签页任务之外。停放或移除成员不会停止终端；聚焦会显示停放的目标而不改变停放标志。请在原终端回答真正等待输入的问题；组织管理方法不会合成回复或代理状态。
+
+服务器启动标识变化后，重新读取完整目录和当前目标列表，再提交新操作。组织管理方法失败或缺失时，普通输入和导航方法仍然可用。删除组织定义与 `worktree.remove` 是不同操作，检出目录会保留。参见[工作流程](/zh-cn/docs/how-to-work/)和 [CLI 参考](/zh-cn/docs/cli-reference/)。

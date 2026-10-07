@@ -8,6 +8,7 @@ pub(crate) fn render_tab_bar(
     buffer: &mut Buffer,
     area: Rect,
     snapshot: &ClientShellSnapshot,
+    mission_labels: Option<&HashMap<String, String>>,
     config: &ClientShellConfig,
     tab_scroll: &mut usize,
     reveal_focused_tab: &mut bool,
@@ -24,7 +25,10 @@ pub(crate) fn render_tab_bar(
     let desired_widths = tabs
         .iter()
         .map(|tab| {
-            let label = tab_label(tab);
+            let label = tab_label(
+                tab,
+                mission_labels.and_then(|labels| labels.get(&tab.tab_id)),
+            );
             display_width(&label).saturating_add(4).max(MIN_TAB_WIDTH)
         })
         .collect::<Vec<_>>();
@@ -92,7 +96,10 @@ pub(crate) fn render_tab_bar(
     let mut first_visible = None;
     let mut last_visible = None;
     for (index, tab) in tabs.iter().enumerate().skip(*tab_scroll) {
-        let name = tab_label(tab);
+        let name = tab_label(
+            tab,
+            mission_labels.and_then(|labels| labels.get(&tab.tab_id)),
+        );
         let desired = desired_widths[index];
         let remaining = tab_right.saturating_sub(x);
         let width = desired.min(remaining);
@@ -371,11 +378,14 @@ fn max_tab_scroll(widths: &[u16], available: u16) -> usize {
     start
 }
 
-fn tab_label(tab: &ClientShellTab) -> String {
+fn tab_label(tab: &ClientShellTab, mission: Option<&String>) -> String {
+    let label = mission
+        .map(|mission| format!("{} ◆ {mission}", tab.label))
+        .unwrap_or_else(|| tab.label.clone());
     if tab.zoomed {
-        format!("{} Z", tab.label)
+        format!("{label} Z")
     } else {
-        tab.label.clone()
+        label
     }
 }
 

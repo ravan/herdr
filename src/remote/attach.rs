@@ -75,15 +75,21 @@ pub(crate) fn run_remote(remote: RemoteLaunch) -> io::Result<()> {
     )?;
 
     let _bridge = SshStdioBridge::start(
-        remote.target,
+        remote.target.clone(),
         prepared_remote.remote_herdr,
         local_socket.clone(),
-        session_name,
+        session_name.clone(),
         remote_ssh.options(),
         false,
     )?;
 
-    run_client_process(&local_socket, &reattach_command, remote.keybindings)
+    run_client_process(
+        &local_socket,
+        &reattach_command,
+        remote.keybindings,
+        &remote.target,
+        &session_name,
+    )
 }
 
 pub(crate) fn check_saved_ssh(target: &str, session: &str) -> io::Result<()> {
@@ -465,13 +471,14 @@ impl RemoteHerdr {
     }
 
     fn for_platform(platform: RemotePlatform) -> Self {
+        let program = crate::build_info::executable_name();
         let (install_suffix, executable) = if platform.is_windows() {
             (
                 String::new(),
-                RemoteExecutable::WindowsPath("herdr.exe".to_string()),
+                RemoteExecutable::WindowsPath(format!("{program}.exe")),
             )
         } else {
-            let install_suffix = ".local/bin/herdr".to_string();
+            let install_suffix = format!(".local/bin/{program}");
             let shell_path = format!("\"$HOME/{install_suffix}\"");
             (install_suffix, RemoteExecutable::PosixShellPath(shell_path))
         };
@@ -1283,6 +1290,16 @@ impl InstallSource {
     }
 }
 
+fn require_remote_install_supported() -> io::Result<()> {
+    if crate::build_info::fork_name().is_some() {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, format!(
+            "Automatic SSH installation is disabled for this fork. Install {} on the remote machine and add it to PATH before attaching.",
+            crate::build_info::executable_name()
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn prepare_remote_herdr(
     ssh: &RemoteSsh,
     live_handoff_enabled: bool,
@@ -1341,6 +1358,7 @@ fn prepare_discovered_remote_herdr(
         }
     }
 
+    require_remote_install_supported()?;
     let mut stop_after_install_approved = false;
     if let Some(status_probe_herdr) = candidates.first().or_else(|| {
         remote_binary_exists(ssh, &remote_herdr)
@@ -1426,6 +1444,7 @@ fn prepare_windows_remote_herdr(
         }
     }
 
+    require_remote_install_supported()?;
     let stop_after_install_approved = if let Some(candidate) = candidates.first() {
         confirm_remote_install_with_running_server(
             ssh,
@@ -1639,6 +1658,15 @@ fn remote_binary_candidates(
 }
 
 fn windows_remote_binary_candidate_command() -> String {
+    if crate::build_info::fork_name().is_some() {
+        let program = crate::platform::quote_powershell_arg(&format!(
+            "{}.exe",
+            crate::build_info::executable_name()
+        ));
+        return windows_powershell_script_command(&format!(
+            "$candidate = Get-Command {program} -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -ne $candidate) {{ $path = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($candidate.Source)); [Console]::Out.WriteLine('{WINDOWS_REMOTE_PATH_MARKER}' + $path) }}; exit 0"
+        ));
+    }
     windows_powershell_script_command(&format!(
         r#"function Emit-HerdrPath([string]$CandidatePath) {{ if ([string]::IsNullOrWhiteSpace($CandidatePath) -or -not (Test-Path -LiteralPath $CandidatePath -PathType Leaf)) {{ return }}; $candidateFullPath = [System.IO.Path]::GetFullPath($CandidatePath); $encodedCandidate = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($candidateFullPath)); [Console]::Out.WriteLine('{WINDOWS_REMOTE_PATH_MARKER}' + $encodedCandidate) }}; $pathCommand = Get-Command herdr.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -ne $pathCommand) {{ Emit-HerdrPath $pathCommand.Source }}; $userSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-CimInstance Win32_Process -Filter "Name = 'herdr.exe' OR Name = 'herdr-dev.exe'" -ErrorAction SilentlyContinue | ForEach-Object {{ $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid -ErrorAction SilentlyContinue; if ($owner.ReturnValue -eq 0 -and $owner.Sid -eq $userSid) {{ Emit-HerdrPath $_.ExecutablePath }} }}; $herdrHome = if ([string]::IsNullOrWhiteSpace($env:HERDR_HOME)) {{ Join-Path $env:USERPROFILE '.herdr' }} else {{ $env:HERDR_HOME }}; $activeJunction = Get-Item -LiteralPath (Join-Path $herdrHome 'packages\standalone\current') -Force -ErrorAction SilentlyContinue; if ($null -ne $activeJunction -and -not [string]::IsNullOrWhiteSpace([string]$activeJunction.Target)) {{ Emit-HerdrPath (Join-Path ([string]$activeJunction.Target) 'herdr.exe') }}; exit 0"#
     ))
@@ -1669,6 +1697,10 @@ fn push_if_new_remote_binary_candidate(candidates: &mut Vec<RemoteHerdr>, candid
 }
 
 fn known_remote_binary_candidate_script(platform: &RemotePlatform) -> String {
+    if crate::build_info::fork_name().is_some() {
+        let program = crate::build_info::executable_name();
+        return format!("if [ -n \"${{HOME:-}}\" ] && [ -x \"$HOME/.local/bin/{program}\" ]; then printf '%s\\n' \"$HOME/.local/bin/{program}\"; fi\n");
+    }
     let mut script = String::from(
         r#"home=${HOME:-}
 user=${USER:-}
@@ -1722,7 +1754,8 @@ fn remote_binary_on_path_any(
     ssh: &RemoteSsh,
     remote_herdr: &RemoteHerdr,
 ) -> io::Result<Option<RemoteHerdr>> {
-    let output = ssh.posix_user_shell_output("command -v herdr")?;
+    let command = format!("command -v {}", crate::build_info::executable_name());
+    let output = ssh.posix_user_shell_output(&command)?;
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if let Some(candidate) = remote_herdr_from_path_discovery(remote_herdr, &stdout) {
@@ -1732,7 +1765,7 @@ fn remote_binary_on_path_any(
 
     // Non-POSIX login shells such as xonsh reject `command -v`; retry through
     // /bin/sh while retaining the login-shell probe for shell-initialized PATHs.
-    let output = ssh.sh_output("command -v herdr\n")?;
+    let output = ssh.sh_output(&format!("{command}\n"))?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -2641,7 +2674,7 @@ fn posix_remote_api_discovery_command(platform: &RemotePlatform, session: &str) 
     let script = format!(
         r#"set -f
 candidates=$(
-command -v herdr
+command -v {program}
 {discovery}
 )
 IFS='
@@ -2661,6 +2694,7 @@ done
 printf '%s\n' 'remote Herdr does not support machine API forwarding; update Herdr on this machine' >&2
 exit 2"#,
         discovery = known_remote_binary_candidate_script(platform),
+        program = crate::build_info::executable_name(),
         session = shell_quote(session),
     );
     format!(
@@ -3351,6 +3385,8 @@ fn run_client_process(
     local_socket: &Path,
     reattach_command: &str,
     keybindings: RemoteKeybindings,
+    target: &str,
+    session: &str,
 ) -> io::Result<()> {
     let exe = std::env::current_exe()?;
     let status = Command::new(exe)
@@ -3361,6 +3397,8 @@ fn run_client_process(
         )
         .env(REATTACH_COMMAND_ENV_VAR, reattach_command)
         .env(REMOTE_KEYBINDINGS_ENV_VAR, keybindings.as_str())
+        .env(REMOTE_TARGET_ENV_VAR, target)
+        .env(REMOTE_SESSION_ENV_VAR, session)
         .env_remove(crate::api::SOCKET_PATH_ENV_VAR)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())

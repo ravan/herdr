@@ -542,6 +542,12 @@
           "description": "Open the session navigator."
         },
         {
+          "key": "keys.mission_control",
+          "type": "keybinding",
+          "default": "\"prefix+m\"",
+          "description": "Open Mission control Spaces."
+        },
+        {
           "key": "keys.navigate_workspace_up",
           "type": "keybinding",
           "default": "\"up\"",
@@ -1038,10 +1044,11 @@
           "key": "ui.agent_panel_sort",
           "type": "enum",
           "default": "\"spaces\"",
-          "description": "Agent sidebar ordering. Saved values are \"spaces\" or \"priority\"; \"workspaces\" is accepted as an alias for \"spaces\".",
+          "description": "Agent sidebar ordering. Saved values are \"spaces\", \"missions\", or \"priority\"; \"workspaces\" is accepted as an alias for \"spaces\".",
           "values": [
             "spaces",
-            "priority"
+            "priority",
+            "missions"
           ]
         },
         {

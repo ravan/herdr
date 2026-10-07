@@ -10,6 +10,9 @@ pub(crate) struct OverlayRender {
     pub(crate) primary: Rect,
     pub(crate) clear: Rect,
     pub(crate) cancel: Rect,
+    pub(crate) mission_control_rows: Vec<(Rect, super::super::mission_control::SpaceSelection)>,
+    pub(crate) mission_control_scrollbar: Rect,
+    pub(crate) mission_control_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(crate) navigator_popup: Rect,
     pub(crate) navigator_search: Rect,
     pub(crate) navigator_rows: Vec<(Rect, ClientNavigatorTarget)>,
@@ -67,6 +70,7 @@ pub(crate) fn render_client_overlay(
         ClientShellOverlay::Navigator(v) => {
             render_navigator_overlay(b, v, endpoints, active_endpoint_id, p)
         }
+        ClientShellOverlay::MissionControl(v) => render_mission_control(b, v, p),
         ClientShellOverlay::Settings(v) => {
             settings_overlay::render_settings_overlay(b, v, s.integration_updates_available, p)
         }
@@ -171,7 +175,7 @@ pub(crate) fn render_context_menu(
     let screen = buffer.area;
     let max_item_width = items
         .iter()
-        .map(|item| display_width(item.label))
+        .map(|item| display_width(&item.label))
         .max()
         .unwrap_or(0);
     let width = max_item_width
@@ -192,8 +196,12 @@ pub(crate) fn render_context_menu(
     let rect = Rect::new(x, y, width, height);
     let inner = panel(buffer, rect, palette.accent, palette.panel_bg)?;
     let mut rows = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let row_y = inner.y.saturating_add(index as u16);
+    let first_visible = menu
+        .highlighted
+        .saturating_add(1)
+        .saturating_sub(usize::from(inner.height));
+    for (index, item) in items.iter().enumerate().skip(first_visible) {
+        let row_y = inner.y.saturating_add((index - first_visible) as u16);
         if row_y >= inner.bottom() {
             break;
         }
@@ -208,7 +216,7 @@ pub(crate) fn render_context_menu(
             Style::default().fg(palette.text).bg(palette.panel_bg)
         };
         buffer.set_style(row, style);
-        put_text(buffer, row.x, row.y, row.width, item.label, style);
+        put_text(buffer, row.x, row.y, row.width, &item.label, style);
         rows.push((row, index));
     }
     Some(OverlayRender {
@@ -1271,14 +1279,25 @@ fn render_confirm_close_overlay(
             .bg(p.panel_bg)
             .add_modifier(Modifier::BOLD),
     );
-    put_text(
-        b,
-        i.x,
-        i.y + 1,
-        i.width,
-        &format!(" {}", c.detail),
-        Style::default().fg(p.text).bg(p.panel_bg),
-    );
+    if c.organization.is_some() {
+        use ratatui::widgets::{Paragraph, Widget, Wrap};
+        Paragraph::new(c.detail.as_str())
+            .style(Style::default().fg(p.text).bg(p.panel_bg))
+            .wrap(Wrap { trim: true })
+            .render(
+                Rect::new(i.x.saturating_add(1), i.y + 1, i.width.saturating_sub(1), 2),
+                b,
+            );
+    } else {
+        put_text(
+            b,
+            i.x,
+            i.y + 1,
+            i.width,
+            &format!(" {}", c.detail),
+            Style::default().fg(p.text).bg(p.panel_bg),
+        );
+    }
     let rs = row(i, &[13, 12], 2, 3);
     let [ok, cancel] = rs.as_slice() else {
         return None;
@@ -1312,6 +1331,221 @@ fn render_confirm_close_overlay(
         worktree_search: Rect::default(),
         worktree_rows: Vec::new(),
         cursor: None,
+        ..OverlayRender::default()
+    })
+}
+
+fn render_mission_control(
+    buffer: &mut Buffer,
+    control: &super::super::mission_control::MissionControl,
+    palette: &Palette,
+) -> Option<OverlayRender> {
+    let geometry = control.geometry;
+    let area = geometry.area;
+    if panel(buffer, area, palette.accent, palette.panel_bg).is_none() {
+        return Some(OverlayRender {
+            area,
+            ..OverlayRender::default()
+        });
+    }
+    let style = Style::default()
+        .fg(palette.text)
+        .bg(palette.panel_bg)
+        .remove_modifier(Modifier::DIM);
+    put_text(
+        buffer,
+        geometry.header.x,
+        geometry.header.y,
+        geometry.header.width.saturating_sub(geometry.close.width),
+        "Mission control",
+        style.add_modifier(Modifier::BOLD),
+    );
+    if geometry.header.y.saturating_add(3) < area.bottom().saturating_sub(1) {
+        put_text(
+            buffer,
+            geometry.header.x,
+            geometry.header.y.saturating_add(3),
+            geometry.header.width,
+            &control.scope,
+            style.fg(palette.overlay0),
+        );
+    }
+    put_text(
+        buffer,
+        geometry.close.x,
+        geometry.close.y,
+        geometry.close.width,
+        " esc close ",
+        style.bg(palette.accent).fg(contrast(palette)),
+    );
+    if geometry.header.height > 0 && geometry.header.y + 1 < area.bottom().saturating_sub(1) {
+        for (rect, view) in geometry.view_tabs() {
+            put_text(
+                buffer,
+                rect.x,
+                rect.y,
+                rect.width,
+                view.label(),
+                if control.view == view {
+                    style.fg(palette.accent).add_modifier(Modifier::BOLD)
+                } else {
+                    style.fg(palette.overlay0)
+                },
+            );
+        }
+    }
+    let search = Rect::new(
+        geometry.search.x.saturating_add(2),
+        geometry.search.y,
+        geometry.search.width.saturating_sub(2),
+        geometry.search.height,
+    );
+    put_text(
+        buffer,
+        geometry.search.x,
+        geometry.search.y,
+        geometry.search.width.min(2),
+        "/ ",
+        style.fg(palette.overlay0),
+    );
+    let cursor = text_editor::render(buffer, search, &control.query, style);
+    let body = geometry.body;
+    if control.rows.is_empty() {
+        let message = match control.view {
+            super::super::mission_control::MissionControlView::Spaces => "No matching spaces",
+            super::super::mission_control::MissionControlView::Missions => "No missions",
+            super::super::mission_control::MissionControlView::NeedsYou => "No agents need you",
+        };
+        put_text(
+            buffer,
+            body.x,
+            body.y,
+            body.width,
+            message,
+            style.fg(palette.overlay0),
+        );
+    }
+    for (index, row) in control
+        .rows
+        .iter()
+        .enumerate()
+        .skip(control.scroll)
+        .take(usize::from(body.height))
+    {
+        let rect = Rect::new(
+            body.x,
+            body.y + (index - control.scroll) as u16,
+            body.width,
+            1,
+        );
+        let selected = row
+            .selection
+            .as_ref()
+            .is_some_and(|selection| control.selection_matches(selection));
+        let row_style = if selected {
+            style.bg(palette.active_row_bg).add_modifier(Modifier::BOLD)
+        } else {
+            style
+        };
+        buffer.set_style(rect, row_style);
+        if rect.width < 60 {
+            let public_id = match &row.selection {
+                Some(super::super::mission_control::SpaceSelection::Target(target)) => {
+                    target.public_id()
+                }
+                _ => "",
+            };
+            let id_width = display_width(public_id).min(rect.width);
+            let indent = row.depth.min(2);
+            let prefix = format!(
+                "{}{}{}",
+                " ".repeat(usize::from(indent)),
+                control.row_marker(row),
+                if row.parked { "[Hibernate] " } else { "" }
+            );
+            let label_width = rect
+                .width
+                .saturating_sub(id_width + u16::from(id_width > 0));
+            put_text(
+                buffer,
+                rect.x,
+                rect.y,
+                label_width,
+                &format!("{prefix}{}", row.label),
+                row_style,
+            );
+            put_text(
+                buffer,
+                rect.right().saturating_sub(id_width),
+                rect.y,
+                id_width,
+                public_id,
+                row_style.fg(palette.overlay1),
+            );
+            continue;
+        }
+        let marker = control.row_marker(row);
+        let detail = if row.parked {
+            format!(" [Hibernate] · {}", row.detail)
+        } else if row.detail.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", row.detail)
+        };
+        put_text(
+            buffer,
+            rect.x,
+            rect.y,
+            rect.width,
+            &format!(
+                "{}{marker}{}{detail}",
+                " ".repeat(usize::from(row.depth) * 2),
+                row.label
+            ),
+            row_style,
+        );
+    }
+    let metrics = control.scroll_metrics();
+    super::super::scroll::render_list_scrollbar(buffer, geometry.scrollbar, metrics, palette);
+    let footer = control
+        .error
+        .as_ref()
+        .map(|error| format!("Target unavailable: {error}"))
+        .unwrap_or_else(|| {
+            if control.view == super::mission_control::MissionControlView::Missions {
+                if control.mission_worktree_available {
+                    "new worktree · ctrl+n · ↑↓ select · enter jump".into()
+                } else {
+                    "new worktree unavailable · ↑↓ select · enter jump".into()
+                }
+            } else {
+                "↑↓ select · enter jump · tab view · right-click assign".into()
+            }
+        });
+    put_text(
+        buffer,
+        geometry.footer.x,
+        geometry.footer.y,
+        geometry.footer.width,
+        &footer,
+        if control.error.is_some() {
+            style.fg(palette.red)
+        } else {
+            style.fg(palette.overlay0)
+        },
+    );
+    Some(OverlayRender {
+        area,
+        cursor,
+        cancel: geometry.close,
+        clear: if control.view == super::mission_control::MissionControlView::Missions {
+            geometry.mission_worktree_action()
+        } else {
+            Rect::default()
+        },
+        mission_control_rows: control.hit_rows(),
+        mission_control_scrollbar: geometry.scrollbar,
+        mission_control_scroll_metrics: Some(metrics),
         ..OverlayRender::default()
     })
 }

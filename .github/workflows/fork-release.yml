@@ -1,0 +1,234 @@
+name: Herdr Houston
+
+on:
+  push:
+    tags:
+      - "houston-v*"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+
+concurrency:
+  group: houston-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.repository == 'ravan/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/houston-v')
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.identity.outputs.commit }}
+      build_id: ${{ steps.identity.outputs.build_id }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - &require-fork-admins
+        name: Require repository admins for publishing and reruns
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for actor in "$GITHUB_ACTOR" "$GITHUB_TRIGGERING_ACTOR"; do
+            permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$actor/permission" --jq .permission)"
+            if [ "$permission" != "admin" ]; then
+              echo "error: $actor must have repository admin permission to publish" >&2
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate Houston tag and source
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+          python3 scripts/fork_release.py prepare --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          components: rustfmt,clippy
+      - name: Install Zig
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+      - name: Install Rust tools
+        uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+        with:
+          tool: just,cargo-nextest
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: houston-checks
+      - name: Run checks
+        run: |
+          just ci
+          just docs-contract-test
+      - name: Check fork identity and update policy
+        env:
+          HERDR_BUILD_FORK: houston
+          HERDR_BUILD_ID: ${{ steps.identity.outputs.build_id }}
+          HERDR_FAKE_UPDATE_VERSION: 99.0.0
+        run: just test-one fork_
+
+  build:
+    needs: preflight
+    if: github.repository == 'ravan/herdr'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            asset: herdr-houston-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            asset: herdr-houston-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            asset: herdr-houston-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset: herdr-houston-macos-aarch64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset: herdr-houston-windows-x86_64.zip
+    runs-on: ${{ matrix.os }}
+    env:
+      HERDR_BUILD_FORK: houston
+      HERDR_BUILD_ID: ${{ needs.preflight.outputs.build_id }}
+      HERDR_BUILD_COMMIT: ${{ needs.preflight.outputs.commit }}
+      FORK_VERSION: ${{ needs.preflight.outputs.version }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.commit }}
+      TARGET: ${{ matrix.target }}
+      ASSET: ${{ matrix.asset }}
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: ${{ matrix.target }}
+      - name: Install Zig
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install cmake ninja
+      - name: Set Linux aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: houston-${{ matrix.target }}
+      - name: Build Houston
+        shell: bash
+        run: cargo build --release --locked --target "$TARGET"
+      - name: Package Unix artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/$TARGET/release/herdr"
+          case "$TARGET:$RUNNER_ARCH" in
+            x86_64-unknown-linux-musl:X64|x86_64-apple-darwin:X64|aarch64-apple-darwin:ARM64)
+              test "$("$binary" --version)" = "herdr-houston $FORK_VERSION" ;;
+          esac
+          cp "$binary" "$ASSET"
+          if [ "$RUNNER_OS" = Linux ]; then
+            ldd "$ASSET" > LDD_INFO.txt 2>&1 || true
+            grep -Eq "statically linked|not a dynamic executable" LDD_INFO.txt
+            if nm -u "$ASSET" 2>/dev/null | grep -E '(__cxa|GLIBCXX|CXXABI|_ZSt)'; then
+              echo "error: unresolved C++ runtime symbols" >&2
+              exit 1
+            fi
+          fi
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path $env:RUNNER_TEMP "Microsoft.Windows.Console.ConPTY.nupkg"
+          $stage = Join-Path $env:RUNNER_TEMP "herdr-houston-windows"
+          .\scripts\package_windows_conpty.ps1 `
+            -HerdrExe "target\$env:TARGET\release\herdr.exe" `
+            -ExecutableName "herdr-houston.exe" `
+            -PackagePath $package -StageDir $stage -OutputPath $env:ASSET
+          $version = (& (Join-Path $stage "herdr-houston.exe") --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -ne "herdr-houston $env:FORK_VERSION") {
+            throw "Unexpected Houston binary identity: $version"
+          }
+      - name: Record checksum and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/fork_release.py checksum --tag "$GITHUB_REF_NAME" --commit "$SOURCE_COMMIT" --asset "$ASSET" --metadata "$ASSET.build.json"
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256
+            ${{ matrix.asset }}.build.json
+
+  publish:
+    needs: [preflight, build]
+    if: github.repository == 'ravan/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/houston-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.commit }}
+      FORK_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - *require-fork-admins
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts
+      - name: Verify all artifacts and prepare notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/fork_release.py bundle --tag "$GITHUB_REF_NAME" --commit "$SOURCE_COMMIT" --artifacts artifacts --output release-assets --notes FORK_RELEASE_NOTES.md
+      - name: Publish Houston prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)"
+          test "$current" = "$SOURCE_COMMIT"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease --title "Herdr Houston $FORK_VERSION" --notes-file FORK_RELEASE_NOTES.md
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

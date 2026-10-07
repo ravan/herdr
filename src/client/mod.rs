@@ -491,6 +491,17 @@ async fn run_client_loop(
                     })
                 }),
         );
+        shell.set_endpoint_organization_supported(
+            &endpoint::ClientEndpointId::Local,
+            initial
+                .as_ref()
+                .and_then(|(_, handshake)| handshake.endpoint_capabilities.as_ref())
+                .is_some_and(|capabilities| {
+                    capabilities.iter().any(|capability| {
+                        capability == crate::protocol::endpoint::ORGANIZATION_CAPABILITY
+                    })
+                }),
+        );
         if local_unavailable {
             shell.set_endpoint_status(
                 &endpoint::ClientEndpointId::Local,
@@ -1322,6 +1333,12 @@ async fn run_client_loop(
                     );
                     let frame = state.shell.as_mut().and_then(|shell| {
                         shell.set_endpoint_methods_for(&endpoint_id, Some(negotiation.methods()));
+                        shell.set_endpoint_organization_supported(
+                            &endpoint_id,
+                            negotiation.supports_capability(
+                                crate::protocol::endpoint::ORGANIZATION_CAPABILITY,
+                            ),
+                        );
                         shell.set_endpoint_agent_view_projection_supported(
                             &endpoint_id,
                             agent_view_projection_supported,
@@ -2045,6 +2062,27 @@ async fn run_client_loop(
                             continue;
                         }
                         let snapshot = match endpoint::decode_endpoint_control(&kind, &data) {
+                            Ok(endpoint::EndpointControlMessage::Organization(catalog)) => {
+                                let frame = state.shell.as_mut().and_then(|shell| {
+                                    shell
+                                        .set_endpoint_organization_for_generation(
+                                            &endpoint_id,
+                                            generation,
+                                            catalog,
+                                        )
+                                        .then(|| {
+                                            shell.compose(
+                                                state.reported_size.0,
+                                                state.reported_size.1,
+                                            )
+                                        })
+                                        .flatten()
+                                });
+                                if let Some(frame) = frame {
+                                    state.present_frame(frame);
+                                }
+                                continue;
+                            }
                             Ok(endpoint::EndpointControlMessage::HealthPong) => continue,
                             Ok(endpoint::EndpointControlMessage::AgentViewProjection(
                                 projection,

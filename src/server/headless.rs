@@ -78,6 +78,7 @@ mod endpoint_requests;
 mod lifecycle;
 mod native_graphics;
 mod notifications;
+mod organization;
 mod render;
 mod retained_surface;
 mod surface_interest;
@@ -1967,6 +1968,9 @@ impl HeadlessServer {
                 if self.app.state.popup_pane.is_some() && self.popup_owner_tab_id.is_none() {
                     self.popup_owner_tab_id = self.shell_tab_id_for_client(client_id);
                 }
+                if !self.send_organization_catalog(client_id) {
+                    return false;
+                }
                 if let Some(message) = projection_message {
                     self.send_to_client(client_id, message);
                 }
@@ -2966,6 +2970,7 @@ impl HeadlessServer {
         if matches!(
             &msg.request.method,
             api::schema::Method::WorktreeCreate(_)
+                | api::schema::Method::WorktreeCreateInMission(_)
                 | api::schema::Method::WorktreeRemove(_)
                 | api::schema::Method::WorktreeList(_)
                 | api::schema::Method::WorktreeOpen(_)
@@ -2986,6 +2991,10 @@ impl HeadlessServer {
             self.app.state.view.terminal_area =
                 Rect::new(0, 0, self.effective_size.0, self.effective_size.1);
         }
+        let transferred_tab = match &msg.request.method {
+            api::schema::Method::TabTransfer(params) => Some(params.tab_id.clone()),
+            _ => None,
+        };
         let mut response = if matches!(
             &msg.request.method,
             api::schema::Method::ServerReloadConfig(_)
@@ -3012,6 +3021,15 @@ impl HeadlessServer {
             self.app
                 .handle_api_request_after_internal_events_drained(msg.request)
         };
+        if let Some(old_id) = transferred_tab {
+            if let Ok(api::schema::SuccessResponse {
+                result: api::schema::ResponseResult::TabInfo { tab },
+                ..
+            }) = serde_json::from_str(&response)
+            {
+                self.relocate_shell_tab(&old_id, &tab.tab_id, &tab.workspace_id);
+            }
+        }
         if let Some(snapshot) = frozen_alt_screen_read {
             if let Ok(mut success) = serde_json::from_str::<api::schema::SuccessResponse>(&response)
             {

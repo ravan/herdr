@@ -42,6 +42,17 @@ pub struct ErrorBody {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseResult {
+    Organization {
+        organization: crate::organization::OrganizationState,
+    },
+    MissionCreated {
+        mission: crate::organization::Mission,
+        organization: crate::organization::OrganizationState,
+    },
+    CollectionCreated {
+        collection: crate::organization::Collection,
+        organization: crate::organization::OrganizationState,
+    },
     Pong {
         version: String,
         protocol: u32,

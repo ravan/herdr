@@ -14,6 +14,8 @@ pub(super) const SNAPSHOT_VERSION: u32 = 3;
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
 pub struct SessionSnapshot {
+    #[serde(default)]
+    pub organization: crate::organization::OrganizationState,
     /// Format version — used to detect incompatible changes.
     #[serde(default)]
     pub version: u32,
@@ -182,6 +184,8 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
 #[derive(Deserialize)]
 struct RawSessionSnapshot {
     #[serde(default)]
+    organization: crate::organization::OrganizationState,
+    #[serde(default)]
     version: u32,
     #[serde(default)]
     workspaces: Vec<serde_json::Value>,
@@ -199,6 +203,7 @@ struct RawSessionSnapshot {
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
     Ok(SessionSnapshot {
+        organization: raw.organization,
         version: raw.version,
         workspaces: raw
             .workspaces
@@ -271,6 +276,7 @@ pub fn capture(
     selected: usize,
 ) -> SessionSnapshot {
     SessionSnapshot {
+        organization: crate::organization::OrganizationState::default(),
         version: SNAPSHOT_VERSION,
         workspaces: workspaces
             .iter()
@@ -405,6 +411,8 @@ pub(super) fn layout_fingerprint(snapshot: &SessionSnapshot) -> Option<String> {
     use sha2::{Digest, Sha256};
 
     let mut value = serde_json::to_value(snapshot).ok()?;
+    // Organization metadata does not change the released pane-history layout contract.
+    value.as_object_mut()?.remove("organization");
     // Sets serialize as arrays; normalize their order as well as JSON object keys.
     let mut collapsed: Vec<_> = snapshot.collapsed_space_keys.iter().collect();
     collapsed.sort_unstable();
@@ -654,8 +662,61 @@ mod tests {
     }
 
     #[test]
+    fn mc_s1_legacy_layout_history_digest_stays_compatible() {
+        let snapshot =
+            parse_snapshot(r#"{"version":3,"workspaces":[],"active":null,"selected":0}"#).unwrap();
+        let history = capture_history(&snapshot, &[], &TerminalRuntimeRegistry::new());
+        // Golden digest of the released empty-layout JSON, including its defaulted chrome fields.
+        assert_eq!(
+            history.layout_fingerprint.as_deref(),
+            Some("2198d77535592b6ee86ec31094cf6f5a888d55e464fdcc9275267b839d9fe968")
+        );
+    }
+
+    #[test]
+    fn mc_s1_invalid_organization_cannot_enter_through_disk_or_handoff_json() {
+        let valid = serde_json::json!({"revision":2,"collections":[{"id":"collection_1","name":"Agent workshop","order":0,"hibernating":false}],
+            "family_assignments":[{"family_id":{"kind":"standalone","workspace_id":"ws_1"},"collection_id":"collection_1"}]});
+        let mut duplicate_collection = valid.clone();
+        duplicate_collection["collections"]
+            .as_array_mut()
+            .unwrap()
+            .push(valid["collections"][0].clone());
+        let mut duplicate_family = valid.clone();
+        duplicate_family["family_assignments"]
+            .as_array_mut()
+            .unwrap()
+            .push(valid["family_assignments"][0].clone());
+        let mut missing_collection = valid.clone();
+        missing_collection["family_assignments"][0]["collection_id"] = serde_json::json!("missing");
+        let mut invalid_name = valid.clone();
+        invalid_name["collections"][0]["name"] = serde_json::json!(" \n ");
+        let mut exhausted = valid.clone();
+        exhausted["revision"] = serde_json::json!(u64::MAX);
+        for catalog in [
+            duplicate_collection,
+            duplicate_family,
+            missing_collection,
+            invalid_name,
+            exhausted,
+        ] {
+            let value = serde_json::json!({"version":3,"workspaces":[],"active":null,"selected":0,"organization":catalog});
+            let encoded = serde_json::to_string(&value).unwrap();
+            assert!(
+                parse_snapshot(&encoded).is_err(),
+                "disk catalog rejected: {catalog}"
+            );
+            assert!(
+                serde_json::from_str::<SessionSnapshot>(&encoded).is_err(),
+                "handoff catalog rejected: {catalog}"
+            );
+        }
+    }
+
+    #[test]
     fn round_trip_empty_session() {
         let snap = SessionSnapshot {
+            organization: crate::organization::OrganizationState::default(),
             version: SNAPSHOT_VERSION,
             workspaces: vec![],
             active: None,
@@ -723,6 +784,7 @@ mod tests {
         );
 
         let snap = SessionSnapshot {
+            organization: crate::organization::OrganizationState::default(),
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
@@ -1423,6 +1485,7 @@ mod tests {
         );
 
         let snap = SessionSnapshot {
+            organization: crate::organization::OrganizationState::default(),
             version: SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("test-ws".to_string()),

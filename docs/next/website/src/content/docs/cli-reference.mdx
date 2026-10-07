@@ -569,3 +569,16 @@ These meanings apply to reads. For `pane wait-output` only, both `recent` and `r
 | `HERDR_WORKSPACE_ID` | Public workspace id for the running pane process. |
 | `HERDR_LOG` | Set log filter, for example `HERDR_LOG=herdr=debug`. |
 | `HERDR_DISABLE_SOUND` | Disable sound playback even when sound notifications are enabled. |
+
+## Mission control and organization
+
+Open Mission control in the TUI with `ctrl+b m`. Collection and mission creation, assignment, parking and maintenance use the TUI menus or the independently advertised methods in the [JSON socket API](/docs/socket-api/). Use current IDs from `workspace list`, `tab list` and `pane list`; catalogs belong to the selected endpoint and session.
+
+```bash
+herdr --session work pane list
+herdr --session work pane move w1:p2 --tab w2:t1 --split right
+herdr --session work agent read w2:p3 --source detection --format text
+herdr --session work agent explain w2:p3 --json
+```
+
+Replace the example session and IDs with those returned by your server. After a move, use `.result.move_result.pane.pane_id`; the example destination ID is illustrative. Reply to a blocked agent in its original terminal after selecting it in Needs you. `agent prompt` rejects an already blocked agent. Ordinary CLI moves preserve explicit pane mission overrides; otherwise the pane inherits its destination tab. These commands continue to work when organization methods are unavailable. See [the daily workflow](/docs/how-to-work/).

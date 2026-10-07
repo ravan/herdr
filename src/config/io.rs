@@ -20,6 +20,9 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
 ];
 
 pub fn app_dir_name() -> &'static str {
+    if let Some(name) = crate::build_info::fork_app_dir_name() {
+        return name;
+    }
     if cfg!(debug_assertions) {
         "herdr-dev"
     } else {
